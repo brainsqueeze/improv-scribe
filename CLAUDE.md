@@ -237,7 +237,7 @@ no built-in equivalent.
 ### Docstrings
 
 Use NumPy-style docstrings for all public functions and classes. Follow the
-wording and structural conventions used throughout the `graph-ai` repository:
+wording and structural conventions used throughout the `improv-scribe` repository:
 
 ```python
 def my_function(x: int, y: str | None = None) -> dict[str, Any]:
