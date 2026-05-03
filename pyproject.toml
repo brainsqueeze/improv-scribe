@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "audio_to_sheet"
+version = "0.1.0"
+description = "Real-time guitar/bass audio to sheet music transcription"
+# music21 >=9.3 requires Python 3.11+.
+# All other deps support through Python 3.13.
+# librosa on 3.13 needs: pip install standard-aifc standard-sunau
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    # Audio I/O
+    "sounddevice>=0.4.6",
+    "numpy>=1.26",
+    "scipy>=1.12",
+
+    # Signal processing & pitch detection
+    "librosa>=0.11.0",
+    "soxr>=0.3",             # librosa's default resampler (faster than resampy)
+
+    # Music notation
+    "music21>=9.3.0",
+
+    # GUI
+    "PyQt6>=6.6",
+    "pyqtgraph>=0.13",
+
+    # Utilities
+    "platformdirs>=4.0",
+    "typing_extensions>=4.9",
+]
+
+[project.optional-dependencies]
+# Python 3.13 only: librosa needs these two stdlib-extracted packages
+py313 = ["standard-aifc>=3.13", "standard-sunau>=3.13"]
+
+# torchcrepe pitch backend (actively maintained PyTorch port of CREPE, recommended
+# over the original TensorFlow `crepe` package which has been unmaintained since 2022)
+# Apple Silicon MPS acceleration is used automatically when available.
+crepe = ["torchcrepe>=0.0.20", "torch>=2.1"]
+
+# Raw MIDI export with float-second timing
+midi-raw = ["mido>=1.3"]
+
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+    "pytest-qt>=4.3",
+    "ruff>=0.3",
+    "mypy>=1.9",
+    "types-setuptools",
+]
+
+[project.scripts]
+audio-to-sheet = "audio_to_sheet.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short"
