@@ -118,6 +118,7 @@ def run(args: argparse.Namespace) -> int:
         quantized_notes = quantizer.quantize(events)
         score_builder = ScoreBuilder(profile, tempo_result, title=input_path.stem)
         score = score_builder.build(quantized_notes)
+        tab_assignments = score_builder.compute_tab_assignments(quantized_notes)
         print(f"  {len(quantized_notes)} quantized elements (notes + rests)")
 
     # 6. Export
@@ -127,7 +128,12 @@ def run(args: argparse.Namespace) -> int:
         else:
             print(f"Exporting PDF → {args.output_pdf} …")
             exporter = PDFExporter(config)
-            out = exporter.export(score, Path(args.output_pdf))
+            out = exporter.export(
+                score, Path(args.output_pdf),
+                tab_notes=quantized_notes,
+                tab_assignments=tab_assignments,
+                tab_profile=profile,
+            )
             print(f"  PDF written: {out}")
 
     if args.output_midi:

@@ -90,6 +90,9 @@ class MainWindow(QMainWindow):
         self._is_recording = False
         self._last_score = None
         self._last_events = None
+        self._last_quantized_notes = None
+        self._last_tab_assignments = None
+        self._last_profile: object = None
         self._current_device_index: int | None = None
         self._current_instrument = Instrument.GUITAR
         self._rhythm_mode = "auto"
@@ -275,6 +278,10 @@ class MainWindow(QMainWindow):
                 quantized_notes = quantizer.quantize(events)
                 score_builder = ScoreBuilder(profile, tempo_result)
                 score = score_builder.build(quantized_notes)
+                # Store for tab injection at export time (set before signal fires)
+                self._last_quantized_notes = quantized_notes
+                self._last_tab_assignments = score_builder.compute_tab_assignments(quantized_notes)
+                self._last_profile = profile
             else:
                 # Raw mode: build a minimal score for MIDI (no PDF grid)
                 score_builder = ScoreBuilder(profile, tempo_result)
@@ -327,7 +334,12 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage("Exporting PDF…")
         try:
             exporter = PDFExporter(self._config)
-            out = exporter.export(self._last_score, Path(path))
+            out = exporter.export(
+                self._last_score, Path(path),
+                tab_notes=self._last_quantized_notes,
+                tab_assignments=self._last_tab_assignments,
+                tab_profile=self._last_profile,
+            )
             self._status_bar.showMessage(f"PDF saved → {out}")
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Export Error", str(exc))
