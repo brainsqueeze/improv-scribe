@@ -28,8 +28,8 @@ from pathlib import Path
 
 import numpy as np
 
-from audio_to_sheet.analysis.instrument_profiles import InstrumentProfile
-from audio_to_sheet.config import AppConfig
+from improv_scribe.analysis.instrument_profiles import InstrumentProfile
+from improv_scribe.config import AppConfig
 
 # ---------------------------------------------------------------------------
 # Result types

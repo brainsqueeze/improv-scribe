@@ -16,8 +16,8 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from pathlib import Path
 
-from audio_to_sheet.analysis.instrument_profiles import Instrument, InstrumentProfile
-from audio_to_sheet.quantization.grid import QuantizedNote
+from improv_scribe.analysis.instrument_profiles import Instrument, InstrumentProfile
+from improv_scribe.quantization.grid import QuantizedNote
 
 # ---------------------------------------------------------------------------
 # Tuning data for <staff-tuning> elements

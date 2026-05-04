@@ -1,8 +1,8 @@
-# audio_to_sheet
+# improv_scribe
 
 Play your guitar or bass into your Mac and get back sheet music and guitar tablature as a PDF — automatically.
 
-`audio_to_sheet` listens to your instrument through a microphone or USB audio interface, figures out what notes you're playing, and transcribes them into standard notation and tab. When you're done playing, export a PDF you can print, read on a tablet, or import into your DAW.
+`improv_scribe` listens to your instrument through a microphone or USB audio interface, figures out what notes you're playing, and transcribes them into standard notation and tab. When you're done playing, export a PDF you can print, read on a tablet, or import into your DAW.
 
 ---
 
@@ -42,7 +42,7 @@ python scripts/generate_fixtures.py
 conda run -n auto-sheet-music pytest
 
 # 5. Launch the app
-python -m audio_to_sheet
+python -m improv_scribe
 ```
 
 ---
@@ -52,7 +52,7 @@ python -m audio_to_sheet
 Useful for batch transcription or scripting:
 
 ```bash
-python -m audio_to_sheet.cli \
+python -m improv_scribe.cli \
   --device 0 \
   --instrument guitar \
   --duration 30 \
@@ -86,5 +86,5 @@ See [CLAUDE.md](CLAUDE.md) for the full module map, architecture overview, code 
 
 ```bash
 conda run -n auto-sheet-music ruff check src/ tests/   # lint
-conda run -n auto-sheet-music pytest --cov=audio_to_sheet  # test with coverage
+conda run -n auto-sheet-music pytest --cov=improv_scribe  # test with coverage
 ```

@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import pytest
 
-from audio_to_sheet.analysis.note_tracker import NoteEvent
-from audio_to_sheet.quantization.grid import (
+from improv_scribe.analysis.note_tracker import NoteEvent
+from improv_scribe.quantization.grid import (
     _DURATION_FRACTIONS,
     NoteDuration,
     RhythmQuantizer,
     to_quarter_length,
 )
-from audio_to_sheet.quantization.tempo import TempoResult
+from improv_scribe.quantization.tempo import TempoResult
 
 
 def _make_tempo(bpm: float = 120.0) -> TempoResult:

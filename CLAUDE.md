@@ -1,8 +1,8 @@
-# CLAUDE.md — audio_to_sheet
+# CLAUDE.md — improv_scribe
 
 ## Project Overview
 
-`audio_to_sheet` is a macOS desktop application that captures live audio from a microphone
+`improv_scribe` is a macOS desktop application that captures live audio from a microphone
 or USB audio interface and transcribes it into sheet music (PDF) and MIDI.
 
 **Target instruments (MVP):** Standard guitar (E2–E6), bass guitar (B0–G4)
@@ -63,24 +63,24 @@ Audio Input (sounddevice)
 
 | Path | Responsibility |
 |---|---|
-| `src/audio_to_sheet/capture/device.py` | List / select CoreAudio devices via sounddevice |
-| `src/audio_to_sheet/capture/stream.py` | Continuous audio capture, ring buffer |
-| `src/audio_to_sheet/capture/preprocessor.py` | DC removal, noise gate, windowing |
-| `src/audio_to_sheet/analysis/onset.py` | Librosa onset detection wrapper |
-| `src/audio_to_sheet/analysis/pitch.py` | CREPE pitch estimation, confidence filtering |
-| `src/audio_to_sheet/analysis/pipeline.py` | Combines onset + pitch into NoteEvent stream |
-| `src/audio_to_sheet/quantization/tempo.py` | BPM detection via librosa |
-| `src/audio_to_sheet/quantization/grid.py` | Snap continuous timing to rhythmic grid |
-| `src/audio_to_sheet/notation/score.py` | Build music21 Score from NoteEvents |
-| `src/audio_to_sheet/notation/instruments.py` | Instrument profiles (clef, range, transposition) |
-| `src/audio_to_sheet/export/pdf.py` | MusicXML → PDF via MuseScore |
-| `src/audio_to_sheet/export/midi.py` | music21 → MIDI |
-| `src/audio_to_sheet/gui/main_window.py` | PyQt6 main window, layout |
-| `src/audio_to_sheet/gui/waveform_widget.py` | Real-time waveform display (pyqtgraph) |
-| `src/audio_to_sheet/gui/spectrogram_widget.py` | Live CQT spectrogram |
-| `src/audio_to_sheet/gui/transcription_log.py` | Scrolling note event log |
-| `src/audio_to_sheet/config.py` | Central config / constants |
-| `src/audio_to_sheet/models.py` | Shared dataclasses (NoteEvent, SessionConfig) |
+| `src/improv_scribe/capture/device.py` | List / select CoreAudio devices via sounddevice |
+| `src/improv_scribe/capture/stream.py` | Continuous audio capture, ring buffer |
+| `src/improv_scribe/capture/preprocessor.py` | DC removal, noise gate, windowing |
+| `src/improv_scribe/analysis/onset.py` | Librosa onset detection wrapper |
+| `src/improv_scribe/analysis/pitch.py` | CREPE pitch estimation, confidence filtering |
+| `src/improv_scribe/analysis/pipeline.py` | Combines onset + pitch into NoteEvent stream |
+| `src/improv_scribe/quantization/tempo.py` | BPM detection via librosa |
+| `src/improv_scribe/quantization/grid.py` | Snap continuous timing to rhythmic grid |
+| `src/improv_scribe/notation/score.py` | Build music21 Score from NoteEvents |
+| `src/improv_scribe/notation/instruments.py` | Instrument profiles (clef, range, transposition) |
+| `src/improv_scribe/export/pdf.py` | MusicXML → PDF via MuseScore |
+| `src/improv_scribe/export/midi.py` | music21 → MIDI |
+| `src/improv_scribe/gui/main_window.py` | PyQt6 main window, layout |
+| `src/improv_scribe/gui/waveform_widget.py` | Real-time waveform display (pyqtgraph) |
+| `src/improv_scribe/gui/spectrogram_widget.py` | Live CQT spectrogram |
+| `src/improv_scribe/gui/transcription_log.py` | Scrolling note event log |
+| `src/improv_scribe/config.py` | Central config / constants |
+| `src/improv_scribe/models.py` | Shared dataclasses (NoteEvent, SessionConfig) |
 
 ---
 
@@ -158,10 +158,10 @@ conda run -n auto-sheet-music <command>
 conda activate auto-sheet-music
 
 # Launch GUI
-python -m audio_to_sheet
+python -m improv_scribe
 
 # CLI capture (headless, useful for testing)
-python -m audio_to_sheet.cli --device 0 --instrument guitar --duration 30 --output out/
+python -m improv_scribe.cli --device 0 --instrument guitar --duration 30 --output out/
 ```
 
 ---
@@ -172,7 +172,7 @@ python -m audio_to_sheet.cli --device 0 --instrument guitar --duration 30 --outp
 conda run -n auto-sheet-music pytest                       # all tests
 conda run -n auto-sheet-music pytest tests/analysis/       # specific module
 conda run -n auto-sheet-music pytest -k "test_pitch"       # filter by name
-conda run -n auto-sheet-music pytest --cov=audio_to_sheet  # with coverage
+conda run -n auto-sheet-music pytest --cov=improv_scribe  # with coverage
 ```
 
 ## Linting
@@ -196,7 +196,7 @@ sd.check_input_settings(device=N, samplerate=44100)
 ```
 
 ### CREPE pitch output
-Set `AUDIO_TO_SHEET_DEBUG=1` env var to write per-frame pitch/confidence CSVs to `/tmp/ats_debug/`.
+Set `improv_scribe_DEBUG=1` env var to write per-frame pitch/confidence CSVs to `/tmp/ats_debug/`.
 
 ### MuseScore PDF export failures
 - Ensure `mscore` or `mscore3` is on PATH: `which mscore`

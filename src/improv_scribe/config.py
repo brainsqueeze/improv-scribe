@@ -3,7 +3,7 @@ config.py — Global configuration and environment variable resolution.
 
 All tuneable constants live here. Override any value via environment variables
 (prefix ATS_) without touching source code. Example:
-    ATS_SAMPLE_RATE=48000 python -m audio_to_sheet
+    ATS_SAMPLE_RATE=48000 python -m improv_scribe
 """
 
 from __future__ import annotations

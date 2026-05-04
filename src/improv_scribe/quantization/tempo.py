@@ -15,8 +15,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from audio_to_sheet.analysis.note_tracker import NoteEvent
-from audio_to_sheet.config import AppConfig
+from improv_scribe.analysis.note_tracker import NoteEvent
+from improv_scribe.config import AppConfig
 
 
 @dataclass

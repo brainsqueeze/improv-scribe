@@ -5,7 +5,7 @@ Transcribes a .wav file and writes PDF and/or MIDI output.
 
 Usage
 -----
-python -m audio_to_sheet.cli \\
+python -m improv_scribe.cli \\
     --input recording.wav \\
     --instrument guitar \\
     --backend pyin \\
@@ -14,7 +14,7 @@ python -m audio_to_sheet.cli \\
     --output-midi out.mid
 
 For a full option list:
-    python -m audio_to_sheet.cli --help
+    python -m improv_scribe.cli --help
 """
 
 from __future__ import annotations
@@ -55,16 +55,16 @@ def _load_wav(path: Path, target_sr: int) -> tuple[np.ndarray, int]:
 
 def run(args: argparse.Namespace) -> int:
     """Main CLI logic. Returns exit code."""
-    from audio_to_sheet.analysis.instrument_profiles import Instrument, get_profile
-    from audio_to_sheet.analysis.note_tracker import NoteTracker
-    from audio_to_sheet.analysis.onset import OnsetDetector
-    from audio_to_sheet.analysis.pitch import PitchEstimator
-    from audio_to_sheet.config import AppConfig
-    from audio_to_sheet.export.midi_exporter import MIDIExporter
-    from audio_to_sheet.export.pdf_exporter import PDFExporter
-    from audio_to_sheet.notation.score_builder import ScoreBuilder
-    from audio_to_sheet.quantization.grid import RhythmQuantizer
-    from audio_to_sheet.quantization.tempo import TempoEstimator
+    from improv_scribe.analysis.instrument_profiles import Instrument, get_profile
+    from improv_scribe.analysis.note_tracker import NoteTracker
+    from improv_scribe.analysis.onset import OnsetDetector
+    from improv_scribe.analysis.pitch import PitchEstimator
+    from improv_scribe.config import AppConfig
+    from improv_scribe.export.midi_exporter import MIDIExporter
+    from improv_scribe.export.pdf_exporter import PDFExporter
+    from improv_scribe.notation.score_builder import ScoreBuilder
+    from improv_scribe.quantization.grid import RhythmQuantizer
+    from improv_scribe.quantization.tempo import TempoEstimator
 
     config = AppConfig()
     config.pitch_backend = args.backend
@@ -145,7 +145,7 @@ def run(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="python -m audio_to_sheet.cli",
+        prog="python -m improv_scribe.cli",
         description="Batch audio-to-sheet-music transcription (no GUI).",
     )
     p.add_argument("--input", required=True, help="Path to input .wav file")

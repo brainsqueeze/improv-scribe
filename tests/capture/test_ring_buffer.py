@@ -11,7 +11,7 @@ import threading
 
 import numpy as np
 
-from audio_to_sheet.capture.audio_input import RingBuffer
+from improv_scribe.capture.audio_input import RingBuffer
 
 
 class TestRingBuffer:

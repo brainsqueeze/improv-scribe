@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from audio_to_sheet.analysis.instrument_profiles import Instrument, get_profile
-from audio_to_sheet.export.tab_xml import inject_tab_part
-from audio_to_sheet.quantization.grid import NoteDuration, QuantizedNote
+from improv_scribe.analysis.instrument_profiles import Instrument, get_profile
+from improv_scribe.export.tab_xml import inject_tab_part
+from improv_scribe.quantization.grid import NoteDuration, QuantizedNote
 
 # ---------------------------------------------------------------------------
 # Minimal MusicXML fixture

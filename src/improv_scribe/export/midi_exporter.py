@@ -12,9 +12,9 @@ from pathlib import Path
 
 import music21.stream
 
-from audio_to_sheet.analysis.note_tracker import NoteEvent
-from audio_to_sheet.config import AppConfig
-from audio_to_sheet.quantization.tempo import TempoResult
+from improv_scribe.analysis.note_tracker import NoteEvent
+from improv_scribe.config import AppConfig
+from improv_scribe.quantization.tempo import TempoResult
 
 
 class MIDIExporter:

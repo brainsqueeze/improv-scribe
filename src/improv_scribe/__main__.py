@@ -2,7 +2,7 @@
 __main__.py — GUI entry point.
 
 Run with:
-    python -m audio_to_sheet
+    python -m improv_scribe
 """
 
 from __future__ import annotations
@@ -11,8 +11,8 @@ import sys
 
 from PyQt6.QtWidgets import QApplication
 
-from audio_to_sheet.config import AppConfig
-from audio_to_sheet.gui.main_window import MainWindow
+from improv_scribe.config import AppConfig
+from improv_scribe.gui.main_window import MainWindow
 
 
 def main() -> None:

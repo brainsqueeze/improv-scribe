@@ -25,9 +25,9 @@ import math
 import numpy as np
 import pytest
 
-from audio_to_sheet.analysis.instrument_profiles import Instrument, get_profile
-from audio_to_sheet.analysis.pitch import PitchEstimator, PitchResult
-from audio_to_sheet.config import AppConfig
+from improv_scribe.analysis.instrument_profiles import Instrument, get_profile
+from improv_scribe.analysis.pitch import PitchEstimator, PitchResult
+from improv_scribe.config import AppConfig
 
 SR = 44100
 AMPLITUDE = 0.7

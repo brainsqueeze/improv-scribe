@@ -32,9 +32,9 @@ import music21.stream
 import music21.tempo
 from music21.duration import Duration
 
-from audio_to_sheet.analysis.instrument_profiles import Instrument, InstrumentProfile
-from audio_to_sheet.quantization.grid import QuantizedNote
-from audio_to_sheet.quantization.tempo import TempoResult
+from improv_scribe.analysis.instrument_profiles import Instrument, InstrumentProfile
+from improv_scribe.quantization.grid import QuantizedNote
+from improv_scribe.quantization.tempo import TempoResult
 
 # Map our instrument enum to music21 instrument objects
 _INSTRUMENT_MAP: dict[Instrument, type[music21.instrument.Instrument]] = {
@@ -160,7 +160,7 @@ class ScoreBuilder:
             raise RuntimeError(
                 "compute_tab_assignments() called but include_tab=False"
             )
-        from audio_to_sheet.notation.tab_builder import assign_frets
+        from improv_scribe.notation.tab_builder import assign_frets
 
         return assign_frets(notes, self._profile.instrument)
 

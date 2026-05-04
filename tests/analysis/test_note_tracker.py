@@ -12,11 +12,11 @@ import math
 import numpy as np
 import pytest
 
-from audio_to_sheet.analysis.instrument_profiles import Instrument, get_profile
-from audio_to_sheet.analysis.note_tracker import NoteTracker, hz_to_midi
-from audio_to_sheet.analysis.onset import Onset
-from audio_to_sheet.analysis.pitch import PitchFrame, PitchResult
-from audio_to_sheet.config import AppConfig
+from improv_scribe.analysis.instrument_profiles import Instrument, get_profile
+from improv_scribe.analysis.note_tracker import NoteTracker, hz_to_midi
+from improv_scribe.analysis.onset import Onset
+from improv_scribe.analysis.pitch import PitchFrame, PitchResult
+from improv_scribe.config import AppConfig
 
 
 @pytest.fixture

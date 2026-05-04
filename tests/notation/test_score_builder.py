@@ -12,10 +12,10 @@ import music21.stream
 import music21.tempo
 import pytest
 
-from audio_to_sheet.analysis.instrument_profiles import Instrument, get_profile
-from audio_to_sheet.notation.score_builder import ScoreBuilder
-from audio_to_sheet.quantization.grid import NoteDuration, QuantizedNote
-from audio_to_sheet.quantization.tempo import TempoResult
+from improv_scribe.analysis.instrument_profiles import Instrument, get_profile
+from improv_scribe.notation.score_builder import ScoreBuilder
+from improv_scribe.quantization.grid import NoteDuration, QuantizedNote
+from improv_scribe.quantization.tempo import TempoResult
 
 
 def _make_tempo(bpm: float = 120.0) -> TempoResult:

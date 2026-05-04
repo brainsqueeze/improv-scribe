@@ -33,8 +33,8 @@ from enum import StrEnum
 
 import numpy as np
 
-from audio_to_sheet.analysis.note_tracker import NoteEvent
-from audio_to_sheet.quantization.tempo import TempoResult
+from improv_scribe.analysis.note_tracker import NoteEvent
+from improv_scribe.quantization.tempo import TempoResult
 
 # ---------------------------------------------------------------------------
 # Duration catalogue

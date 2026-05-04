@@ -25,10 +25,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from audio_to_sheet.analysis.instrument_profiles import InstrumentProfile
-from audio_to_sheet.analysis.onset import Onset
-from audio_to_sheet.analysis.pitch import PitchResult
-from audio_to_sheet.config import AppConfig
+from improv_scribe.analysis.instrument_profiles import InstrumentProfile
+from improv_scribe.analysis.onset import Onset
+from improv_scribe.analysis.pitch import PitchResult
+from improv_scribe.config import AppConfig
 
 # ---------------------------------------------------------------------------
 # NoteEvent — the central currency of the pipeline

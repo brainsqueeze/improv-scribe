@@ -23,11 +23,11 @@ from typing import TYPE_CHECKING
 
 import music21.stream
 
-from audio_to_sheet.config import AppConfig
+from improv_scribe.config import AppConfig
 
 if TYPE_CHECKING:
-    from audio_to_sheet.analysis.instrument_profiles import InstrumentProfile
-    from audio_to_sheet.quantization.grid import QuantizedNote
+    from improv_scribe.analysis.instrument_profiles import InstrumentProfile
+    from improv_scribe.quantization.grid import QuantizedNote
 
 
 class MuseScoreNotFoundError(RuntimeError):
@@ -92,7 +92,7 @@ class PDFExporter:
                 and tab_assignments is not None
                 and tab_profile is not None
             ):
-                from audio_to_sheet.export.tab_xml import inject_tab_part
+                from improv_scribe.export.tab_xml import inject_tab_part
 
                 inject_tab_part(mxl_path, tab_notes, tab_assignments, tab_profile)
 

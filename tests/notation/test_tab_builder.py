@@ -6,15 +6,15 @@ Unit tests for tab_builder — fret assignment via dynamic programming.
 
 from __future__ import annotations
 
-from audio_to_sheet.analysis.instrument_profiles import Instrument
-from audio_to_sheet.notation.tab_builder import (
+from improv_scribe.analysis.instrument_profiles import Instrument
+from improv_scribe.notation.tab_builder import (
     BASS_TUNING,
     GUITAR_TUNING,
     MAX_FRET,
     assign_frets,
     get_candidates,
 )
-from audio_to_sheet.quantization.grid import NoteDuration, QuantizedNote
+from improv_scribe.quantization.grid import NoteDuration, QuantizedNote
 
 # ---------------------------------------------------------------------------
 # Helpers

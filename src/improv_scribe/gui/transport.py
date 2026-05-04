@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from audio_to_sheet.capture.audio_input import DeviceInfo
+from improv_scribe.capture.audio_input import DeviceInfo
 
 
 class TransportBar(QWidget):

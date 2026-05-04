@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from audio_to_sheet.config import AppConfig
+from improv_scribe.config import AppConfig
 
 
 @dataclass

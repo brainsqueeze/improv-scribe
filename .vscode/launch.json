@@ -10,7 +10,7 @@
             "type": "debugpy",
             "request": "launch",
             "cwd": "${workspaceFolder}/src",
-            "module": "audio_to_sheet"
+            "module": "improve_scribe"
         }
     ]
 }

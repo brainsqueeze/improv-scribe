@@ -9,8 +9,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from audio_to_sheet.capture.noise_gate import NoiseGate
-from audio_to_sheet.config import AppConfig
+from improv_scribe.capture.noise_gate import NoiseGate
+from improv_scribe.config import AppConfig
 
 
 @pytest.fixture
