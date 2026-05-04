@@ -13,17 +13,21 @@ bypassing music21's incomplete tablature support.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from pathlib import Path
 
 from audio_to_sheet.analysis.instrument_profiles import Instrument, InstrumentProfile
 from audio_to_sheet.quantization.grid import QuantizedNote
-
 
 # ---------------------------------------------------------------------------
 # Tuning data for <staff-tuning> elements
 # Strings ordered high → low (line 1 = highest string in MusicXML convention)
 # Each entry is (step, octave) where step is the note letter name.
 # ---------------------------------------------------------------------------
+
+# These tunings describe the same physical strings as GUITAR_TUNING / BASS_TUNING
+# in tab_builder.py, but in MusicXML order (line 1 = highest string) rather than
+# the low-to-high MIDI integer order used by the DP algorithm.
 
 # Guitar: string 1 (high E4) → string 6 (low E2)
 GUITAR_STAFF_TUNING: list[tuple[str, int]] = [
@@ -98,38 +102,26 @@ def inject_tab_part(
     part_name_el.text = "Tab"
 
     # -----------------------------------------------------------------------
-    # 3. Collect all P1 notes in document order so we can match assignments
+    # 3. Map P1 pitched note elements → fret assignments
     # -----------------------------------------------------------------------
-    # We iterate in the same order the note elements appear across all measures.
-    p1_notes_ordered: list[ET.Element] = []
-    for measure_el in p1.findall(tag("measure")):
-        for note_el in measure_el.findall(tag("note")):
-            p1_notes_ordered.append(note_el)
-
-    # Build an assignment iterator that mirrors the note-matching logic:
-    # non-rest notes consume non-None assignments in order.
-    # Rests consume None assignments.
-    assignment_iter = iter(assignments)
+    # music21's makeMeasures() can insert extra <rest> elements to fill bars,
+    # which have no counterpart in the original notes list. We therefore match
+    # by iterating over the pitched_assignments (non-None entries) and pairing
+    # them only with non-rest XML note elements, skipping XML rests entirely.
+    pitched_assignments = [a for a in assignments if a is not None]
+    pitched_iter = iter(pitched_assignments)
 
     def _is_rest_element(note_el: ET.Element) -> bool:
         return note_el.find(tag("rest")) is not None
 
-    # Pre-build a map: note_el → (string_num, fret) or None
-    note_assignment_map: dict[int, tuple[int, int] | None] = {}  # id(el) → assignment
-    for note_el in p1_notes_ordered:
-        if _is_rest_element(note_el):
-            # Rest — consume None from assignments
-            try:
-                assignment = next(assignment_iter)
-            except StopIteration:
-                assignment = None
-        else:
-            # Non-rest note — consume non-None assignment
-            try:
-                assignment = next(assignment_iter)
-            except StopIteration:
-                assignment = None
-        note_assignment_map[id(note_el)] = assignment
+    # id(note_el) → (string_idx, fret); rests are absent from the map
+    note_assignment_map: dict[int, tuple[int, int]] = {}
+    for measure_el in p1.findall(tag("measure")):
+        for note_el in measure_el.findall(tag("note")):
+            if not _is_rest_element(note_el):
+                assignment = next(pitched_iter, None)
+                if assignment is not None:
+                    note_assignment_map[id(note_el)] = assignment
 
     # Tuning and string count
     tuning_data = _STAFF_TUNING.get(profile.instrument, GUITAR_STAFF_TUNING)
@@ -150,12 +142,12 @@ def inject_tab_part(
         # In the first measure, inject tab staff attributes
         if first_measure:
             attrs_el = ET.SubElement(p2_measure, tag("attributes"))
-            _build_tab_attributes(attrs_el, tuning_data, n_strings, tag)
+            _build_tab_attributes(attrs_el, tuning_data, tag)
             first_measure = False
 
         # Copy note elements, adding technical annotations where applicable
         for note_el in p1_measure.findall(tag("note")):
-            new_note = _copy_element_deep(note_el, tag)
+            new_note = _copy_element_deep(note_el)
             assignment = note_assignment_map.get(id(note_el))
 
             if assignment is not None and not _is_rest_element(note_el):
@@ -180,10 +172,10 @@ def inject_tab_part(
 def _build_tab_attributes(
     attrs_el: ET.Element,
     tuning_data: list[tuple[str, int]],
-    n_strings: int,
-    tag: object,  # callable str → str
+    tag: Callable[[str], str],
 ) -> None:
     """Append <staff-details> and <clef> for tab notation to *attrs_el*."""
+    n_strings = len(tuning_data)
     staff_details = ET.SubElement(attrs_el, tag("staff-details"))
 
     staff_type = ET.SubElement(staff_details, tag("staff-type"))
@@ -210,7 +202,7 @@ def _add_technical_annotation(
     note_el: ET.Element,
     string_num: int,
     fret: int,
-    tag: object,  # callable str → str
+    tag: Callable[[str], str],
 ) -> None:
     """Inject <notations><technical><string> and <fret> into *note_el*."""
     notations = ET.SubElement(note_el, tag("notations"))
@@ -221,11 +213,11 @@ def _add_technical_annotation(
     fret_el.text = str(fret)
 
 
-def _copy_element_deep(el: ET.Element, tag: object) -> ET.Element:
+def _copy_element_deep(el: ET.Element) -> ET.Element:
     """Return a deep copy of *el* (tag, attribs, text, tail, children)."""
     new_el = ET.Element(el.tag, attrib=dict(el.attrib))
     new_el.text = el.text
     new_el.tail = el.tail
     for child in el:
-        new_el.append(_copy_element_deep(child, tag))
+        new_el.append(_copy_element_deep(child))
     return new_el

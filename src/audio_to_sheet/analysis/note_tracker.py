@@ -21,15 +21,14 @@ recorded as `cents_deviation` for future use (e.g. expressive MIDI export).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
-from audio_to_sheet.analysis.onset import Onset
-from audio_to_sheet.analysis.pitch import PitchFrame, PitchResult
 from audio_to_sheet.analysis.instrument_profiles import InstrumentProfile
+from audio_to_sheet.analysis.onset import Onset
+from audio_to_sheet.analysis.pitch import PitchResult
 from audio_to_sheet.config import AppConfig
-
 
 # ---------------------------------------------------------------------------
 # NoteEvent — the central currency of the pipeline

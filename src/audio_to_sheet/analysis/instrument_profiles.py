@@ -15,10 +15,10 @@ Bass standard scale: E1–G2 open strings, practical top ~D4.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class Instrument(str, Enum):
+class Instrument(StrEnum):
     GUITAR = "guitar"
     BASS = "bass"
 

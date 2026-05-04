@@ -25,7 +25,7 @@ import math
 import numpy as np
 import pytest
 
-from audio_to_sheet.analysis.instrument_profiles import get_profile, Instrument
+from audio_to_sheet.analysis.instrument_profiles import Instrument, get_profile
 from audio_to_sheet.analysis.pitch import PitchEstimator, PitchResult
 from audio_to_sheet.config import AppConfig
 

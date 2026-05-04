@@ -18,7 +18,6 @@ from audio_to_sheet.analysis.instrument_profiles import Instrument, get_profile
 from audio_to_sheet.export.tab_xml import inject_tab_part
 from audio_to_sheet.quantization.grid import NoteDuration, QuantizedNote
 
-
 # ---------------------------------------------------------------------------
 # Minimal MusicXML fixture
 # One measure, two notes (E4 and A3), no namespace.
@@ -197,7 +196,7 @@ class TestInjectTabPart:
         first_measure = p2.find("measure")
 
         staff_type_els = first_measure.findall(".//staff-details/staff-type")
-        assert len(staff_type_els) >= 1
+        assert len(staff_type_els) == 1
         assert staff_type_els[0].text == "tab"
 
     def test_inject_adds_technical_fret_string(self, mxl_file, guitar_profile):
@@ -236,11 +235,11 @@ class TestInjectTabPart:
         assert (2, 7) in found_technical, f"A3 annotation not found in {found_technical}"
 
     def test_inject_preserves_p1(self, mxl_file, guitar_profile):
-        """After injection, P1 must remain unchanged (same note count)."""
+        """After injection, P1 must remain unchanged (same note count and pitch content)."""
         notes = [_make_note(64), _make_note(57)]
         assignments = [(5, 0), (4, 7)]
 
-        # Count P1 notes before injection
+        # Capture P1 state before injection
         tree_before = ET.parse(mxl_file)
         p1_before = tree_before.find(".//part[@id='P1']")
         notes_before = p1_before.findall(".//note")
@@ -255,6 +254,11 @@ class TestInjectTabPart:
         assert len(notes_after) == len(notes_before), (
             f"P1 note count changed: {len(notes_before)} → {len(notes_after)}"
         )
+
+        # Verify pitch content of first note (E4) is unchanged
+        first_note = notes_after[0]
+        assert first_note.find("pitch/step").text == "E"
+        assert first_note.find("pitch/octave").text == "4"
 
     def test_inject_rest_notes_have_no_technical(self, mxl_file_with_rest, guitar_profile):
         """Rest notes in P2-Tab must not receive technical annotations."""

@@ -10,7 +10,6 @@ from __future__ import annotations
 import threading
 
 import numpy as np
-import pytest
 
 from audio_to_sheet.capture.audio_input import RingBuffer
 

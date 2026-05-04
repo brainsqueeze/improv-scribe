@@ -125,20 +125,29 @@ the instrument's physically possible range.
 
 ## Environment Setup
 
+This project uses **Anaconda** for environment management. Do not use `venv` or `pip` directly.
+
 ```bash
 # 1. Install system dependencies
 brew install musescore          # PDF rendering backend
 brew install portaudio          # sounddevice C backend
 
-# 2. Create virtual environment
-python3.11 -m venv .venv
-source .venv/bin/activate
+# 2. Create the conda environment from the spec file
+conda env create -f envionment.yaml
 
-# 3. Install Python dependencies
-pip install -e ".[dev]"
+# 3. Activate the environment
+conda activate auto-sheet-music
 
 # 4. Verify MuseScore is on PATH
 mscore --version
+```
+
+The environment name is **`auto-sheet-music`** (defined in `envionment.yaml`).  
+Python version: **3.13** (as specified in `envionment.yaml`).
+
+To run any command in the environment without activating it interactively:
+```bash
+conda run -n auto-sheet-music <command>
 ```
 
 ---
@@ -146,7 +155,7 @@ mscore --version
 ## Running the App
 
 ```bash
-source .venv/bin/activate
+conda activate auto-sheet-music
 
 # Launch GUI
 python -m audio_to_sheet
@@ -160,10 +169,19 @@ python -m audio_to_sheet.cli --device 0 --instrument guitar --duration 30 --outp
 ## Running Tests
 
 ```bash
-pytest                          # all tests
-pytest tests/analysis/          # specific module
-pytest -k "test_pitch"          # filter by name
-pytest --cov=audio_to_sheet     # with coverage
+conda run -n auto-sheet-music pytest                       # all tests
+conda run -n auto-sheet-music pytest tests/analysis/       # specific module
+conda run -n auto-sheet-music pytest -k "test_pitch"       # filter by name
+conda run -n auto-sheet-music pytest --cov=audio_to_sheet  # with coverage
+```
+
+## Linting
+
+Use **Ruff** for linting (included in the conda environment):
+
+```bash
+conda run -n auto-sheet-music ruff check src/ tests/
+conda run -n auto-sheet-music ruff check --fix src/ tests/  # auto-fix safe issues
 ```
 
 ---
@@ -193,7 +211,7 @@ Enable `--debug-quantization` CLI flag to dump the raw vs. quantized onset timel
 ## Planned Extensions (Post-MVP)
 
 - [ ] Chord detection (chroma + template matching, or basic-pitch polyphonic model)
-- [ ] Tab notation output (guitar tablature via music21)
+- [x] Tab notation output (guitar/bass tablature via MusicXML injection — see `notation/tab_builder.py`, `export/tab_xml.py`)
 - [ ] LilyPond export for higher typesetting quality
 - [ ] On-device CREPE via CoreML (Apple Silicon acceleration)
 - [ ] Real-time streaming transcription with sliding window buffer
@@ -231,8 +249,8 @@ import or use deprecated aliases from `typing`:
 - `str | None` not `Optional[str]`
 - `str | int` not `Union[str, int]`
 
-`Literal`, `Any`, and `Callable` are still imported from `typing` as they have
-no built-in equivalent.
+`Literal` and `Any` are still imported from `typing` as they have no built-in
+equivalent. `Callable` should be imported from `collections.abc` (Ruff UP035).
 
 ### Docstrings
 

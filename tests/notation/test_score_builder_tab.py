@@ -9,14 +9,12 @@ The actual TAB Part injection is tested separately in tests/export/test_tab_xml.
 
 from __future__ import annotations
 
-import music21.stream
 import pytest
 
 from audio_to_sheet.analysis.instrument_profiles import Instrument, get_profile
 from audio_to_sheet.notation.score_builder import ScoreBuilder
 from audio_to_sheet.quantization.grid import NoteDuration, QuantizedNote
 from audio_to_sheet.quantization.tempo import TempoResult
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -114,7 +112,7 @@ class TestComputeTabAssignments:
         builder = ScoreBuilder(guitar_profile, _make_tempo(), include_tab=True)
         assignments = builder.compute_tab_assignments(notes)
 
-        for i, (note, assignment) in enumerate(zip(notes, assignments)):
+        for i, (note, assignment) in enumerate(zip(notes, assignments, strict=True)):
             if not note.is_rest:
                 assert assignment is not None, f"Note at index {i} has no assignment"
 
@@ -162,3 +160,11 @@ class TestBuildReturnsSinglePart:
         score = builder.build(notes)
 
         assert len(list(score.parts)) == 1
+
+    def test_compute_tab_assignments_raises_when_include_tab_false(self, guitar_profile):
+        """compute_tab_assignments() must raise RuntimeError when include_tab=False."""
+        notes = [_make_note(64, 1.0)]
+        builder = ScoreBuilder(guitar_profile, _make_tempo(), include_tab=False)
+
+        with pytest.raises(RuntimeError, match="include_tab=False"):
+            builder.compute_tab_assignments(notes)

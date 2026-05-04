@@ -20,7 +20,6 @@ from typing import Any
 
 import numpy as np
 
-
 # ---------------------------------------------------------------------------
 # Device enumeration
 # ---------------------------------------------------------------------------
@@ -253,7 +252,7 @@ class AudioStream:
         self._stream.close()
         self._stream = None
 
-    def __enter__(self) -> "AudioStream":
+    def __enter__(self) -> AudioStream:
         self.start()
         return self
 

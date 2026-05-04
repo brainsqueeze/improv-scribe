@@ -7,7 +7,7 @@ the audio pipeline and export pipeline.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -16,7 +16,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from audio_to_sheet.analysis.instrument_profiles import Instrument
 from audio_to_sheet.capture.audio_input import DeviceInfo
 
 

@@ -28,20 +28,19 @@ music21 uses its own quarterLength system (quarter note = 1.0). We convert:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from enum import Enum
+from dataclasses import dataclass
+from enum import StrEnum
 
 import numpy as np
 
 from audio_to_sheet.analysis.note_tracker import NoteEvent
 from audio_to_sheet.quantization.tempo import TempoResult
 
-
 # ---------------------------------------------------------------------------
 # Duration catalogue
 # ---------------------------------------------------------------------------
 
-class NoteDuration(str, Enum):
+class NoteDuration(StrEnum):
     """Standard music notation durations, named for display."""
     WHOLE      = "whole"
     HALF       = "half"
@@ -156,10 +155,6 @@ class RhythmQuantizer:
             return []
 
         quantized: list[QuantizedNote] = []
-        bars_num, bars_denom = self._time_sig
-        # Beats per bar for 4/4 → 4, 3/4 → 3, 6/8 → 1.5 (compound), etc.
-        beats_per_bar = bars_num * (4 / bars_denom)
-
         prev_end_beat = 0.0
 
         for event in events:

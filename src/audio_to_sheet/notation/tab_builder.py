@@ -14,7 +14,6 @@ import math
 from audio_to_sheet.analysis.instrument_profiles import Instrument
 from audio_to_sheet.quantization.grid import QuantizedNote
 
-
 # ---------------------------------------------------------------------------
 # String tunings — MIDI note of each open string, ordered low-to-high
 # ---------------------------------------------------------------------------

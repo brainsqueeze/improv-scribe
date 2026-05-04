@@ -7,14 +7,14 @@ correctly from QuantizedNote lists.
 
 from __future__ import annotations
 
-import pytest
-import music21.stream
 import music21.note
+import music21.stream
 import music21.tempo
+import pytest
 
-from audio_to_sheet.analysis.instrument_profiles import get_profile, Instrument
+from audio_to_sheet.analysis.instrument_profiles import Instrument, get_profile
 from audio_to_sheet.notation.score_builder import ScoreBuilder
-from audio_to_sheet.quantization.grid import NoteDuration, QuantizedNote, to_quarter_length
+from audio_to_sheet.quantization.grid import NoteDuration, QuantizedNote
 from audio_to_sheet.quantization.tempo import TempoResult
 
 

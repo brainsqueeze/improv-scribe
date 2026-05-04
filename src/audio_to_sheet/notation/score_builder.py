@@ -36,7 +36,6 @@ from audio_to_sheet.analysis.instrument_profiles import Instrument, InstrumentPr
 from audio_to_sheet.quantization.grid import QuantizedNote
 from audio_to_sheet.quantization.tempo import TempoResult
 
-
 # Map our instrument enum to music21 instrument objects
 _INSTRUMENT_MAP: dict[Instrument, type[music21.instrument.Instrument]] = {
     Instrument.GUITAR: music21.instrument.Guitar,
@@ -157,6 +156,10 @@ class ScoreBuilder:
             where string_idx is 0-based from the lowest string.
             None for rests.
         """
+        if not self._include_tab:
+            raise RuntimeError(
+                "compute_tab_assignments() called but include_tab=False"
+            )
         from audio_to_sheet.notation.tab_builder import assign_frets
 
         return assign_frets(notes, self._profile.instrument)

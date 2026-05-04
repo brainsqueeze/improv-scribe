@@ -7,7 +7,6 @@ intervals corresponding to known BPM values and verifies detection accuracy.
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from audio_to_sheet.analysis.note_tracker import NoteEvent

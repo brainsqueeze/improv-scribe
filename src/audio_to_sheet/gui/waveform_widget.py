@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import pyqtSignal, QObject
+from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
 

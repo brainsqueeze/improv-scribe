@@ -11,10 +11,9 @@ import pytest
 
 from audio_to_sheet.analysis.note_tracker import NoteEvent
 from audio_to_sheet.quantization.grid import (
+    _DURATION_FRACTIONS,
     NoteDuration,
     RhythmQuantizer,
-    QuantizedNote,
-    _DURATION_FRACTIONS,
     to_quarter_length,
 )
 from audio_to_sheet.quantization.tempo import TempoResult

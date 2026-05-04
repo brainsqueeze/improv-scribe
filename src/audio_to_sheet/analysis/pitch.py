@@ -91,6 +91,7 @@ class _PYinBackend(_PitchBackend):
         config: AppConfig,
     ) -> PitchResult:
         import math as _math
+
         import librosa  # lazy import — keeps startup fast if unused
 
         # pYIN requires enough samples to fit several full periods of fmin.

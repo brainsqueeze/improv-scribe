@@ -55,7 +55,7 @@ def _load_wav(path: Path, target_sr: int) -> tuple[np.ndarray, int]:
 
 def run(args: argparse.Namespace) -> int:
     """Main CLI logic. Returns exit code."""
-    from audio_to_sheet.analysis.instrument_profiles import get_profile, Instrument
+    from audio_to_sheet.analysis.instrument_profiles import Instrument, get_profile
     from audio_to_sheet.analysis.note_tracker import NoteTracker
     from audio_to_sheet.analysis.onset import OnsetDetector
     from audio_to_sheet.analysis.pitch import PitchEstimator
