@@ -10,7 +10,7 @@
             "type": "debugpy",
             "request": "launch",
             "cwd": "${workspaceFolder}/src",
-            "module": "improve_scribe"
+            "module": "improv_scribe"
         }
     ]
 }
