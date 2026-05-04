@@ -8,7 +8,7 @@ or USB audio interface and transcribes it into sheet music (PDF) and MIDI.
 **Target instruments (MVP):** Standard guitar (E2–E6), bass guitar (B0–G4)
 **Transcription scope:** Monophonic (single-note) first; chord support is a planned extension
 **Platform:** macOS 13+ (Ventura or later)
-**Python:** 3.11+
+**Python:** 3.13 (pinned in `envionment.yaml`)
 
 ---
 
@@ -241,7 +241,7 @@ Enable `--debug-quantization` CLI flag to dump the raw vs. quantized onset timel
 
 ### Typing
 
-Python 3.11+ is required. Use modern built-in generic types throughout — do not
+Python 3.13 is required. Use modern built-in generic types throughout — do not
 import or use deprecated aliases from `typing`:
 
 - `list[str]` not `List[str]`
