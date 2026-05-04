@@ -1,17 +1,39 @@
 """
-export/tab_xml.py — Injects a tablature Part into an existing MusicXML file.
+export/tab_xml.py — Injects linked tablature staves into an existing MusicXML file.
 
-MusicXML tab notation uses:
-  - <staff-details><staff-type>tab</staff-type>...</staff-details>
-  - <clef><sign>TAB</sign></clef>
-  - <technical><string>N</string><fret>M</fret></technical> on each note
+MuseScore requires a single part with two staves for proper notation+TAB rendering:
+  - Staff 1: standard notation (existing)
+  - Staff 2: tablature (injected)
 
-This approach works reliably with MuseScore because we control the XML directly,
-bypassing music21's incomplete tablature support.
+MusicXML structure produced:
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <staves>2</staves>
+        <clef number="1">...</clef>        ← existing, gets number="1"
+        <clef number="2"><sign>TAB</sign></clef>   ← injected
+        <staff-details number="2">         ← injected
+          <staff-type>tab</staff-type>
+          <staff-lines>6</staff-lines>
+          <staff-tuning line="1">...</staff-tuning>
+          ...
+        </staff-details>
+      </attributes>
+      <note>                        ← existing note, gains <staff>1</staff> + <technical>
+        <staff>1</staff>
+        <notations><technical><string>N</string><fret>M</fret></technical></notations>
+      </note>
+      <note>                        ← new staff-2 copy
+        <staff>2</staff>
+        <notations><technical><string>N</string><fret>M</fret></technical></notations>
+      </note>
+    </measure>
+  </part>
 """
 
 from __future__ import annotations
 
+import copy
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from pathlib import Path
@@ -24,10 +46,6 @@ from improv_scribe.quantization.grid import QuantizedNote
 # Strings ordered high → low (line 1 = highest string in MusicXML convention)
 # Each entry is (step, octave) where step is the note letter name.
 # ---------------------------------------------------------------------------
-
-# These tunings describe the same physical strings as GUITAR_TUNING / BASS_TUNING
-# in tab_builder.py, but in MusicXML order (line 1 = highest string) rather than
-# the low-to-high MIDI integer order used by the DP algorithm.
 
 # Guitar: string 1 (high E4) → string 6 (low E2)
 GUITAR_STAFF_TUNING: list[tuple[str, int]] = [
@@ -56,7 +74,12 @@ def inject_tab_part(
     profile: InstrumentProfile,
 ) -> None:
     """
-    Modify *mxl_path* in-place to add a TAB Part alongside the existing notation Part.
+    Modify *mxl_path* in-place to add a linked TAB staff to the existing notation staff.
+
+    The existing P1 part is modified to contain two staves:
+    staff 1 (notation) and staff 2 (TAB). Each non-rest note gains a ``<staff>1</staff>``
+    element plus ``<technical><string>/<fret>`` annotations, and a staff-2 copy is
+    inserted immediately after.
 
     Parameters
     ----------
@@ -73,7 +96,6 @@ def inject_tab_part(
     tree = ET.parse(mxl_path)
     root = tree.getroot()
 
-    # Detect namespace (some music21 versions include it)
     ns = ""
     if root.tag.startswith("{"):
         ns = root.tag.split("}")[0] + "}"
@@ -81,40 +103,23 @@ def inject_tab_part(
     def tag(name: str) -> str:
         return f"{ns}{name}"
 
-    # -----------------------------------------------------------------------
-    # 1. Find the first existing <part> (music21 uses non-sequential IDs)
-    # -----------------------------------------------------------------------
     p1 = root.find(f".//{tag('part')}")
     if p1 is None:
         raise ValueError("MusicXML file has no <part> element.")
 
-    # -----------------------------------------------------------------------
-    # 2. Add <score-part id="P2-Tab"> to <part-list>
-    # -----------------------------------------------------------------------
-    part_list = root.find(tag("part-list"))
-    if part_list is None:
-        raise ValueError("MusicXML file has no <part-list> element.")
-
-    tab_part_id = "P2-Tab"
-    score_part = ET.SubElement(part_list, tag("score-part"))
-    score_part.set("id", tab_part_id)
-    part_name_el = ET.SubElement(score_part, tag("part-name"))
-    part_name_el.text = "Tab"
+    tuning_data = _STAFF_TUNING.get(profile.instrument, GUITAR_STAFF_TUNING)
+    n_strings = len(tuning_data)
 
     # -----------------------------------------------------------------------
-    # 3. Map P1 pitched note elements → fret assignments
+    # Build note_assignment_map: id(note_el) → (string_idx, fret)
+    # Only non-rest XML notes are matched; music21-inserted rests are skipped.
     # -----------------------------------------------------------------------
-    # music21's makeMeasures() can insert extra <rest> elements to fill bars,
-    # which have no counterpart in the original notes list. We therefore match
-    # by iterating over the pitched_assignments (non-None entries) and pairing
-    # them only with non-rest XML note elements, skipping XML rests entirely.
     pitched_assignments = [a for a in assignments if a is not None]
     pitched_iter = iter(pitched_assignments)
 
     def _is_rest_element(note_el: ET.Element) -> bool:
         return note_el.find(tag("rest")) is not None
 
-    # id(note_el) → (string_idx, fret); rests are absent from the map
     note_assignment_map: dict[int, tuple[int, int]] = {}
     for measure_el in p1.findall(tag("measure")):
         for note_el in measure_el.findall(tag("note")):
@@ -123,45 +128,26 @@ def inject_tab_part(
                 if assignment is not None:
                     note_assignment_map[id(note_el)] = assignment
 
-    # Tuning and string count
-    tuning_data = _STAFF_TUNING.get(profile.instrument, GUITAR_STAFF_TUNING)
-    n_strings = len(tuning_data)
+    # -----------------------------------------------------------------------
+    # Process the first measure: inject <staves>, tab clef, staff-details
+    # -----------------------------------------------------------------------
+    first_measure = p1.find(tag("measure"))
+    if first_measure is None:
+        raise ValueError("MusicXML part has no measures.")
+
+    attrs_el = first_measure.find(tag("attributes"))
+    if attrs_el is None:
+        attrs_el = ET.Element(tag("attributes"))
+        first_measure.insert(0, attrs_el)
+
+    _inject_two_staves_attributes(attrs_el, tuning_data, tag)
 
     # -----------------------------------------------------------------------
-    # 4. Build the new P2 <part> element
+    # For every measure: annotate staff-1 notes and insert staff-2 copies
     # -----------------------------------------------------------------------
-    p2 = ET.Element(tag("part"))
-    p2.set("id", tab_part_id)
+    for measure_el in p1.findall(tag("measure")):
+        _annotate_measure(measure_el, note_assignment_map, n_strings, tag)
 
-    first_measure = True
-    for p1_measure in p1.findall(tag("measure")):
-        measure_num = p1_measure.get("number", "1")
-        p2_measure = ET.SubElement(p2, tag("measure"))
-        p2_measure.set("number", measure_num)
-
-        # In the first measure, inject tab staff attributes
-        if first_measure:
-            attrs_el = ET.SubElement(p2_measure, tag("attributes"))
-            _build_tab_attributes(attrs_el, tuning_data, tag)
-            first_measure = False
-
-        # Copy note elements, adding technical annotations where applicable
-        for note_el in p1_measure.findall(tag("note")):
-            new_note = _copy_element_deep(note_el)
-            assignment = note_assignment_map.get(id(note_el))
-
-            if assignment is not None and not _is_rest_element(note_el):
-                string_idx, fret = assignment
-                # MusicXML string numbering: 1 = highest string
-                string_num = n_strings - string_idx
-                _add_technical_annotation(new_note, string_num, fret, tag)
-
-            p2_measure.append(new_note)
-
-    # -----------------------------------------------------------------------
-    # 5. Append P2 to root and write back
-    # -----------------------------------------------------------------------
-    root.append(p2)
     tree.write(str(mxl_path), encoding="unicode", xml_declaration=True)
 
 
@@ -169,22 +155,40 @@ def inject_tab_part(
 # Private helpers
 # ---------------------------------------------------------------------------
 
-def _build_tab_attributes(
+def _inject_two_staves_attributes(
     attrs_el: ET.Element,
     tuning_data: list[tuple[str, int]],
     tag: Callable[[str], str],
 ) -> None:
-    """Append <staff-details> and <clef> for tab notation to *attrs_el*."""
+    """Add ``<staves>2</staves>``, a numbered tab ``<clef>``, and ``<staff-details>``."""
     n_strings = len(tuning_data)
+
+    # <staves>2</staves> — must appear before <clef> per MusicXML schema
+    staves_el = ET.Element(tag("staves"))
+    staves_el.text = "2"
+    attrs_el.insert(0, staves_el)
+
+    # Number the existing clef as staff 1 (if any)
+    existing_clef = attrs_el.find(tag("clef"))
+    if existing_clef is not None and not existing_clef.get("number"):
+        existing_clef.set("number", "1")
+
+    # <clef number="2"><sign>TAB</sign></clef>
+    tab_clef = ET.SubElement(attrs_el, tag("clef"))
+    tab_clef.set("number", "2")
+    sign_el = ET.SubElement(tab_clef, tag("sign"))
+    sign_el.text = "TAB"
+
+    # <staff-details number="2">
     staff_details = ET.SubElement(attrs_el, tag("staff-details"))
+    staff_details.set("number", "2")
 
     staff_type = ET.SubElement(staff_details, tag("staff-type"))
     staff_type.text = "tab"
 
-    staff_lines = ET.SubElement(staff_details, tag("staff-lines"))
-    staff_lines.text = str(n_strings)
+    staff_lines_el = ET.SubElement(staff_details, tag("staff-lines"))
+    staff_lines_el.text = str(n_strings)
 
-    # One <staff-tuning> per string; line 1 = highest string
     for line_num, (step, octave) in enumerate(tuning_data, start=1):
         st = ET.SubElement(staff_details, tag("staff-tuning"))
         st.set("line", str(line_num))
@@ -193,9 +197,59 @@ def _build_tab_attributes(
         octave_el = ET.SubElement(st, tag("tuning-octave"))
         octave_el.text = str(octave)
 
-    clef_el = ET.SubElement(attrs_el, tag("clef"))
-    sign_el = ET.SubElement(clef_el, tag("sign"))
-    sign_el.text = "TAB"
+
+def _annotate_measure(
+    measure_el: ET.Element,
+    note_assignment_map: dict[int, tuple[int, int]],
+    n_strings: int,
+    tag: Callable[[str], str],
+) -> None:
+    """
+    For each note in *measure_el*:
+    - Add ``<staff>1</staff>`` and fret/string technical annotation (non-rest notes only)
+    - Insert a staff-2 copy immediately after
+
+    Operates in a single pass using an insertion list to avoid mutation-while-iterating.
+    """
+    original_notes = list(measure_el.findall(tag("note")))
+    insertions: list[tuple[ET.Element, ET.Element]] = []  # (after_el, new_el)
+
+    for note_el in original_notes:
+        is_rest = note_el.find(tag("rest")) is not None
+        assignment = note_assignment_map.get(id(note_el))
+
+        # Add <staff>1</staff> to the original note
+        staff1_el = ET.SubElement(note_el, tag("staff"))
+        staff1_el.text = "1"
+
+        # Add technical annotation to staff-1 note (non-rest with assignment)
+        if not is_rest and assignment is not None:
+            string_idx, fret = assignment
+            string_num = n_strings - string_idx
+            _add_technical_annotation(note_el, string_num, fret, tag)
+
+        # Build staff-2 copy
+        staff2_note = copy.deepcopy(note_el)
+        # Replace or set <staff>2</staff>
+        staff_el = staff2_note.find(tag("staff"))
+        if staff_el is not None:
+            staff_el.text = "2"
+        else:
+            s = ET.SubElement(staff2_note, tag("staff"))
+            s.text = "2"
+
+        insertions.append((note_el, staff2_note))
+
+    # Insert staff-2 copies after their staff-1 counterparts
+    for after_el, new_el in insertions:
+        _insert_after(measure_el, after_el, new_el)
+
+
+def _insert_after(parent: ET.Element, ref: ET.Element, new: ET.Element) -> None:
+    """Insert *new* as a child of *parent* immediately after *ref*."""
+    children = list(parent)
+    idx = children.index(ref)
+    parent.insert(idx + 1, new)
 
 
 def _add_technical_annotation(
@@ -204,20 +258,12 @@ def _add_technical_annotation(
     fret: int,
     tag: Callable[[str], str],
 ) -> None:
-    """Inject <notations><technical><string> and <fret> into *note_el*."""
-    notations = ET.SubElement(note_el, tag("notations"))
+    """Inject ``<notations><technical><string>/<fret>`` into *note_el*."""
+    notations = note_el.find(tag("notations"))
+    if notations is None:
+        notations = ET.SubElement(note_el, tag("notations"))
     technical = ET.SubElement(notations, tag("technical"))
     string_el = ET.SubElement(technical, tag("string"))
     string_el.text = str(string_num)
     fret_el = ET.SubElement(technical, tag("fret"))
     fret_el.text = str(fret)
-
-
-def _copy_element_deep(el: ET.Element) -> ET.Element:
-    """Return a deep copy of *el* (tag, attribs, text, tail, children)."""
-    new_el = ET.Element(el.tag, attrib=dict(el.attrib))
-    new_el.text = el.text
-    new_el.tail = el.tail
-    for child in el:
-        new_el.append(_copy_element_deep(child))
-    return new_el

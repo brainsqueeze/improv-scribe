@@ -3,6 +3,9 @@ tests/export/test_tab_xml.py
 
 Tests for export.tab_xml.inject_tab_part().
 
+MuseScore requires a single part with two linked staves (not two separate parts).
+Staff 1 = standard notation, staff 2 = TAB.
+
 Uses a minimal hardcoded MusicXML fixture so tests do not depend on music21
 or MuseScore being installed.
 """
@@ -129,7 +132,6 @@ def guitar_profile():
 
 @pytest.fixture
 def mxl_file(tmp_path: Path) -> Path:
-    """Write minimal MusicXML to a temp file and return its path."""
     path = tmp_path / "score.musicxml"
     path.write_text(_MINIMAL_MXL, encoding="utf-8")
     return path
@@ -137,33 +139,30 @@ def mxl_file(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def mxl_file_with_rest(tmp_path: Path) -> Path:
-    """Write minimal MusicXML with a rest to a temp file and return its path."""
     path = tmp_path / "score_rest.musicxml"
     path.write_text(_MINIMAL_MXL_WITH_REST, encoding="utf-8")
     return path
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# Tests — single-part two-staves structure
 # ---------------------------------------------------------------------------
 
 class TestInjectTabPart:
-    def test_inject_creates_p2_tab_part(self, mxl_file, guitar_profile):
-        """After injection, root must contain a <part id='P2-Tab'> element."""
-        # E4 (midi 64) → string 1 fret 0; A3 (midi 57) → string 2 fret 7
+    def test_still_one_part_after_injection(self, mxl_file, guitar_profile):
+        """inject_tab_part must NOT add a second <part>; P1 is modified in-place."""
         notes = [_make_note(64), _make_note(57)]
-        assignments = [(5, 0), (4, 7)]  # (string_idx, fret) — string_idx 0=lowest
+        assignments = [(5, 0), (4, 7)]
 
         inject_tab_part(mxl_file, notes, assignments, guitar_profile)
 
         tree = ET.parse(mxl_file)
         root = tree.getroot()
         parts = root.findall(".//part")
-        ids = [p.get("id") for p in parts]
-        assert "P2-Tab" in ids, f"Expected 'P2-Tab' in part ids, got: {ids}"
+        assert len(parts) == 1, f"Expected 1 part, got {len(parts)}"
 
-    def test_inject_adds_tab_clef(self, mxl_file, guitar_profile):
-        """P2-Tab's first measure must contain <clef><sign>TAB</sign></clef>."""
+    def test_staves_element_equals_two(self, mxl_file, guitar_profile):
+        """First measure attributes must contain <staves>2</staves>."""
         notes = [_make_note(64), _make_note(57)]
         assignments = [(5, 0), (4, 7)]
 
@@ -171,20 +170,12 @@ class TestInjectTabPart:
 
         tree = ET.parse(mxl_file)
         root = tree.getroot()
-        p2 = root.find(".//part[@id='P2-Tab']")
-        assert p2 is not None
+        staves_els = root.findall(".//measure/attributes/staves")
+        assert len(staves_els) == 1
+        assert staves_els[0].text == "2"
 
-        first_measure = p2.find("measure")
-        assert first_measure is not None
-
-        clef_signs = [
-            sign.text
-            for sign in first_measure.findall(".//clef/sign")
-        ]
-        assert "TAB" in clef_signs, f"No TAB sign found in clef elements: {clef_signs}"
-
-    def test_inject_adds_staff_details(self, mxl_file, guitar_profile):
-        """P2-Tab's first measure must have <staff-details><staff-type>tab</staff-type>."""
+    def test_tab_clef_on_staff_two(self, mxl_file, guitar_profile):
+        """First measure must contain <clef number='2'><sign>TAB</sign></clef>."""
         notes = [_make_note(64), _make_note(57)]
         assignments = [(5, 0), (4, 7)]
 
@@ -192,17 +183,41 @@ class TestInjectTabPart:
 
         tree = ET.parse(mxl_file)
         root = tree.getroot()
-        p2 = root.find(".//part[@id='P2-Tab']")
-        first_measure = p2.find("measure")
+        clefs = root.findall(".//measure/attributes/clef")
+        tab_clefs = [c for c in clefs if c.get("number") == "2"]
+        assert len(tab_clefs) == 1
+        assert tab_clefs[0].find("sign").text == "TAB"
 
-        staff_type_els = first_measure.findall(".//staff-details/staff-type")
-        assert len(staff_type_els) == 1
-        assert staff_type_els[0].text == "tab"
+    def test_staff_details_on_staff_two(self, mxl_file, guitar_profile):
+        """First measure must have <staff-details number='2'><staff-type>tab</staff-type>."""
+        notes = [_make_note(64), _make_note(57)]
+        assignments = [(5, 0), (4, 7)]
 
-    def test_inject_adds_technical_fret_string(self, mxl_file, guitar_profile):
-        """
-        Non-rest notes in P2-Tab must have <notations><technical><string> and <fret>.
-        """
+        inject_tab_part(mxl_file, notes, assignments, guitar_profile)
+
+        tree = ET.parse(mxl_file)
+        root = tree.getroot()
+        sd_els = root.findall(".//measure/attributes/staff-details[@number='2']")
+        assert len(sd_els) == 1
+        assert sd_els[0].find("staff-type").text == "tab"
+
+    def test_notes_doubled_with_staff_1_and_2(self, mxl_file, guitar_profile):
+        """Each original note must produce a staff-1 note and a staff-2 copy."""
+        notes = [_make_note(64), _make_note(57)]
+        assignments = [(5, 0), (4, 7)]
+
+        inject_tab_part(mxl_file, notes, assignments, guitar_profile)
+
+        tree = ET.parse(mxl_file)
+        root = tree.getroot()
+        all_notes = root.findall(".//part/measure/note")
+        staff_values = [n.find("staff").text for n in all_notes if n.find("staff") is not None]
+
+        assert staff_values.count("1") == 2, f"Expected 2 staff-1 notes, got {staff_values}"
+        assert staff_values.count("2") == 2, f"Expected 2 staff-2 notes, got {staff_values}"
+
+    def test_technical_annotation_on_staff_1_notes(self, mxl_file, guitar_profile):
+        """Staff-1 non-rest notes must carry <technical><string>/<fret> annotations."""
         notes = [_make_note(64), _make_note(57)]
         # E4: string_idx=5 (highest guitar string), fret=0
         # A3: string_idx=4, fret=7
@@ -212,57 +227,24 @@ class TestInjectTabPart:
 
         tree = ET.parse(mxl_file)
         root = tree.getroot()
-        p2 = root.find(".//part[@id='P2-Tab']")
-        p2_notes = p2.findall(".//note")
+        all_notes = root.findall(".//part/measure/note")
+        staff1_notes = [n for n in all_notes if n.find("staff") is not None and n.find("staff").text == "1"]
 
-        # Collect all (string, fret) technical annotations found
         found_technical = []
-        for note_el in p2_notes:
+        for note_el in staff1_notes:
             for tech in note_el.findall(".//notations/technical"):
                 s = tech.find("string")
                 f = tech.find("fret")
                 if s is not None and f is not None:
                     found_technical.append((int(s.text), int(f.text)))
 
-        assert len(found_technical) == 2, (
-            f"Expected 2 technical annotations, got {len(found_technical)}"
-        )
+        # Guitar n_strings=6; E4 string_idx=5 → string_num=1, fret=0
+        # A3 string_idx=4 → string_num=2, fret=7
+        assert (1, 0) in found_technical, f"E4 annotation missing from {found_technical}"
+        assert (2, 7) in found_technical, f"A3 annotation missing from {found_technical}"
 
-        # Guitar: n_strings=6; string_num = n_strings - string_idx
-        # E4: string_idx=5 → string_num=6-5=1, fret=0
-        # A3: string_idx=4 → string_num=6-4=2, fret=7
-        assert (1, 0) in found_technical, f"E4 annotation not found in {found_technical}"
-        assert (2, 7) in found_technical, f"A3 annotation not found in {found_technical}"
-
-    def test_inject_preserves_p1(self, mxl_file, guitar_profile):
-        """After injection, P1 must remain unchanged (same note count and pitch content)."""
-        notes = [_make_note(64), _make_note(57)]
-        assignments = [(5, 0), (4, 7)]
-
-        # Capture P1 state before injection
-        tree_before = ET.parse(mxl_file)
-        p1_before = tree_before.find(".//part[@id='P1']")
-        notes_before = p1_before.findall(".//note")
-
-        inject_tab_part(mxl_file, notes, assignments, guitar_profile)
-
-        tree_after = ET.parse(mxl_file)
-        p1_after = tree_after.find(".//part[@id='P1']")
-        assert p1_after is not None, "P1 was removed after injection"
-
-        notes_after = p1_after.findall(".//note")
-        assert len(notes_after) == len(notes_before), (
-            f"P1 note count changed: {len(notes_before)} → {len(notes_after)}"
-        )
-
-        # Verify pitch content of first note (E4) is unchanged
-        first_note = notes_after[0]
-        assert first_note.find("pitch/step").text == "E"
-        assert first_note.find("pitch/octave").text == "4"
-
-    def test_inject_rest_notes_have_no_technical(self, mxl_file_with_rest, guitar_profile):
-        """Rest notes in P2-Tab must not receive technical annotations."""
-        # 3 elements: note, rest, note
+    def test_rest_notes_have_no_technical(self, mxl_file_with_rest, guitar_profile):
+        """Rest notes must not receive technical annotations on either staff."""
         notes = [_make_note(64), _make_rest(), _make_note(57)]
         assignments = [(5, 0), None, (4, 7)]
 
@@ -270,18 +252,13 @@ class TestInjectTabPart:
 
         tree = ET.parse(mxl_file_with_rest)
         root = tree.getroot()
-        p2 = root.find(".//part[@id='P2-Tab']")
-
-        # Find the rest note in P2 and confirm it has no <notations><technical>
-        for note_el in p2.findall(".//note"):
+        for note_el in root.findall(".//part/measure/note"):
             if note_el.find("rest") is not None:
                 technical_els = note_el.findall(".//notations/technical")
-                assert len(technical_els) == 0, (
-                    "Rest note should not have technical annotations"
-                )
+                assert len(technical_els) == 0, "Rest note should not have technical annotations"
 
-    def test_inject_adds_score_part_to_part_list(self, mxl_file, guitar_profile):
-        """After injection, <part-list> must contain a <score-part id='P2-Tab'>."""
+    def test_original_clef_gets_number_one(self, mxl_file, guitar_profile):
+        """The existing treble clef must be numbered 1 after injection."""
         notes = [_make_note(64), _make_note(57)]
         assignments = [(5, 0), (4, 7)]
 
@@ -289,9 +266,19 @@ class TestInjectTabPart:
 
         tree = ET.parse(mxl_file)
         root = tree.getroot()
-        part_list = root.find("part-list")
-        assert part_list is not None
+        clefs = root.findall(".//measure/attributes/clef")
+        numbered_clefs = {c.get("number"): c for c in clefs}
+        assert "1" in numbered_clefs
+        assert numbered_clefs["1"].find("sign").text == "G"
 
-        score_parts = part_list.findall("score-part")
-        ids = [sp.get("id") for sp in score_parts]
-        assert "P2-Tab" in ids, f"P2-Tab not in part-list score-parts: {ids}"
+    def test_part_list_unchanged(self, mxl_file, guitar_profile):
+        """<part-list> must still contain exactly one <score-part> after injection."""
+        notes = [_make_note(64), _make_note(57)]
+        assignments = [(5, 0), (4, 7)]
+
+        inject_tab_part(mxl_file, notes, assignments, guitar_profile)
+
+        tree = ET.parse(mxl_file)
+        root = tree.getroot()
+        score_parts = root.findall(".//part-list/score-part")
+        assert len(score_parts) == 1, f"Expected 1 score-part, got {len(score_parts)}"
