@@ -31,6 +31,7 @@ import music21.note
 import music21.stream
 import music21.tempo
 from music21.duration import Duration
+from music21.meter.base import TimeSignature
 
 from improv_scribe.analysis.instrument_profiles import Instrument, InstrumentProfile
 from improv_scribe.quantization.grid import QuantizedNote
@@ -109,9 +110,7 @@ class ScoreBuilder:
         part.append(clef_obj)
 
         # Time signature
-        ts = music21.meter.TimeSignature(
-            f"{self._time_sig[0]}/{self._time_sig[1]}"
-        )
+        ts = TimeSignature(f"{self._time_sig[0]}/{self._time_sig[1]}")
         part.append(ts)
 
         # Tempo mark
@@ -130,6 +129,8 @@ class ScoreBuilder:
 
         # Make measures from the flat stream
         part_with_measures = part.makeMeasures()
+        if part_with_measures is None:
+            raise AssertionError("`part_with_measures` cannot be None")
         part_with_measures.makeBeams(inPlace=True)
 
         score.append(part_with_measures)
