@@ -51,9 +51,10 @@ PROFILES: dict[Instrument, InstrumentProfile] = {
     Instrument.GUITAR: InstrumentProfile(
         name="Guitar (standard)",
         instrument=Instrument.GUITAR,
-        freq_min_hz=82.41,    # E2
+        freq_min_hz=73.42,    # D2 — 2 semitones below E2 so CREPE estimates that land
+                              # slightly flat on the open low-E string are not rejected
         freq_max_hz=1174.66,  # D6
-        midi_min=40,          # E2
+        midi_min=40,          # E2 — MIDI range gate still enforced at NoteEvent stage
         midi_max=98,          # D6
         clef="treble",
         transpose_semitones=-12,  # guitar is a transposing instrument (8vb)

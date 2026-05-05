@@ -99,11 +99,16 @@ class ScoreBuilder:
         # Single part
         part = music21.stream.Part()
 
-        # Instrument
+        # Instrument — disable music21's built-in transposition; we apply
+        # transpose_semitones manually to the MIDI note numbers below so that
+        # the written pitch in the MusicXML is already at the correct display
+        # pitch (e.g. guitar sounds E2 but is written as E3).
         m21_instrument_cls = _INSTRUMENT_MAP.get(
             self._profile.instrument, music21.instrument.Guitar
         )
-        part.insert(0, m21_instrument_cls())
+        inst = m21_instrument_cls()
+        inst.transposition = None
+        part.insert(0, inst)
 
         # Clef
         clef_obj = music21.clef.clefFromString(self._profile.clef)
@@ -113,17 +118,21 @@ class ScoreBuilder:
         ts = TimeSignature(f"{self._time_sig[0]}/{self._time_sig[1]}")
         part.append(ts)
 
-        # Tempo mark
-        mm = music21.tempo.MetronomeMark(number=self._tempo_result.bpm)
+        # Tempo mark — round to nearest integer; librosa's beat_track returns floats
+        mm = music21.tempo.MetronomeMark(number=round(self._tempo_result.bpm))
         part.append(mm)
 
-        # Notes and rests
+        # Notes and rests.
+        # transpose_semitones is negative for instruments written higher than they sound
+        # (guitar = -12: sounds E2, written E3).  Subtracting a negative offset raises
+        # the MIDI note to the correct written pitch for display.
         for qn in notes:
             dur = Duration(quarterLength=qn.quarter_length)
             if qn.is_rest:
                 element: music21.note.GeneralNote = music21.note.Rest(duration=dur)
             else:
-                element = music21.note.Note(qn.midi_note, duration=dur)
+                written_midi = qn.midi_note - self._profile.transpose_semitones
+                element = music21.note.Note(written_midi, duration=dur)
 
             part.append(element)
 

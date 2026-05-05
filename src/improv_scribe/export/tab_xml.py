@@ -207,12 +207,16 @@ def _annotate_measure(
     """
     For each note in *measure_el*:
     - Add ``<staff>1</staff>`` and fret/string technical annotation (non-rest notes only)
-    - Insert a staff-2 copy immediately after
+    - Append a staff-2 copy after a ``<backup>`` element that resets the cursor
 
-    Operates in a single pass using an insertion list to avoid mutation-while-iterating.
+    MusicXML cursor semantics: each ``<note>`` without ``<chord/>`` advances the
+    cursor by its duration.  Staff-2 notes must be preceded by a ``<backup>`` that
+    resets the cursor to the beginning of the measure; otherwise they appear at
+    beat positions past the barline and are not rendered.
     """
     original_notes = list(measure_el.findall(tag("note")))
-    insertions: list[tuple[ET.Element, ET.Element]] = []  # (after_el, new_el)
+    staff2_notes: list[ET.Element] = []
+    total_duration = 0
 
     for note_el in original_notes:
         is_rest = note_el.find(tag("rest")) is not None
@@ -228,28 +232,39 @@ def _annotate_measure(
             string_num = n_strings - string_idx
             _add_technical_annotation(note_el, string_num, fret, tag)
 
+        # Accumulate measure duration from notes that advance the cursor.
+        # Notes with <chord/> play simultaneously with the preceding note and
+        # do not advance the cursor — skip them.
+        if note_el.find(tag("chord")) is None:
+            dur_el = note_el.find(tag("duration"))
+            if dur_el is not None:
+                try:
+                    total_duration += int(dur_el.text or "0")
+                except ValueError:
+                    pass
+
         # Build staff-2 copy
         staff2_note = copy.deepcopy(note_el)
-        # Replace or set <staff>2</staff>
         staff_el = staff2_note.find(tag("staff"))
         if staff_el is not None:
             staff_el.text = "2"
         else:
             s = ET.SubElement(staff2_note, tag("staff"))
             s.text = "2"
+        staff2_notes.append(staff2_note)
 
-        insertions.append((note_el, staff2_note))
+    if not staff2_notes or total_duration == 0:
+        return
 
-    # Insert staff-2 copies after their staff-1 counterparts
-    for after_el, new_el in insertions:
-        _insert_after(measure_el, after_el, new_el)
+    # <backup> resets the MusicXML cursor to the start of the measure so
+    # the staff-2 notes are placed at the correct beat positions.
+    backup_el = ET.Element(tag("backup"))
+    backup_dur = ET.SubElement(backup_el, tag("duration"))
+    backup_dur.text = str(total_duration)
+    measure_el.append(backup_el)
 
-
-def _insert_after(parent: ET.Element, ref: ET.Element, new: ET.Element) -> None:
-    """Insert *new* as a child of *parent* immediately after *ref*."""
-    children = list(parent)
-    idx = children.index(ref)
-    parent.insert(idx + 1, new)
+    for note in staff2_notes:
+        measure_el.append(note)
 
 
 def _add_technical_annotation(
