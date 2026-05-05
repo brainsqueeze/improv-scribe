@@ -29,7 +29,7 @@ from improv_scribe.quantization.tempo import TempoEstimator
 SAMPLE_ROOT = Path(__file__).parents[2] / "samples"
 
 
-def make_pipeline_fixtures(sample_path: Path, instrument: Instrument):
+def make_pipeline_fixtures(sample_path: Path, instrument: Instrument) -> tuple:
     """
     Build a module-scoped pipeline fixture chain for one sample file.
 
