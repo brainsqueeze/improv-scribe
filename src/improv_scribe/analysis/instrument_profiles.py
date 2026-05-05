@@ -51,24 +51,23 @@ PROFILES: dict[Instrument, InstrumentProfile] = {
     Instrument.GUITAR: InstrumentProfile(
         name="Guitar (standard)",
         instrument=Instrument.GUITAR,
-        freq_min_hz=73.42,    # D2 — 2 semitones below E2 so CREPE estimates that land
-                              # slightly flat on the open low-E string are not rejected
+        freq_min_hz=73.42,    # D2 — 2 semitones below E2 for CREPE headroom
         freq_max_hz=1174.66,  # D6
-        midi_min=40,          # E2 — MIDI range gate still enforced at NoteEvent stage
-        midi_max=98,          # D6
-        clef="treble",
-        transpose_semitones=-12,  # guitar is a transposing instrument (8vb)
+        midi_min=40,          # E2 (sounding)
+        midi_max=98,          # D6 (sounding)
+        clef="treble8vb",     # 8vb treble: written an octave above sounding pitch
+        transpose_semitones=-12,
     ),
     Instrument.BASS: InstrumentProfile(
         name="Bass Guitar (standard scale)",
         instrument=Instrument.BASS,
-        freq_min_hz=41.20,   # E1
-        freq_max_hz=293.66,  # D4
-        midi_min=28,         # E1
-        midi_max=62,         # D4
-        clef="bass",
-        transpose_semitones=0,
-        noise_gate_rms_override=0.015,  # bass signals can be louder
+        freq_min_hz=38.89,    # D1 — 2 semitones below E1 for CREPE headroom
+        freq_max_hz=293.66,   # D4 (sounding)
+        midi_min=28,          # E1 (sounding)
+        midi_max=62,          # D4 (sounding)
+        clef="bass8vb",       # 8vb bass: written an octave above sounding pitch
+        transpose_semitones=-12,
+        noise_gate_rms_override=0.015,
     ),
 }
 

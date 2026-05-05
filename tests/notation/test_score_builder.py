@@ -131,3 +131,59 @@ class TestScoreBuilder:
         builder = ScoreBuilder(guitar_profile, _make_tempo())
         score = builder.build_raw(notes)
         assert isinstance(score, music21.stream.Score)
+
+
+class TestOctaveTransposition:
+    def test_guitar_note_written_up_octave(self, guitar_profile):
+        """Sounding C4 (MIDI 60) must appear as C5 (MIDI 72) in the score."""
+        notes = [_make_note(60, 1.0)]
+        score = ScoreBuilder(guitar_profile, _make_tempo()).build(notes)
+        score_notes = list(score.flatten().getElementsByClass(music21.note.Note))
+        assert score_notes[0].pitch.midi == 72
+
+    def test_bass_note_written_up_octave(self, bass_profile):
+        """Sounding E1 (MIDI 28) must appear as E2 (MIDI 40) in the score."""
+        notes = [_make_note(28, 1.0)]
+        score = ScoreBuilder(bass_profile, _make_tempo()).build(notes)
+        score_notes = list(score.flatten().getElementsByClass(music21.note.Note))
+        assert score_notes[0].pitch.midi == 40
+
+    def test_guitar_uses_treble8vb_clef(self, guitar_profile):
+        import music21.clef
+        score = ScoreBuilder(guitar_profile, _make_tempo()).build([_make_note(60, 1.0)])
+        clefs = list(score.flatten().getElementsByClass(music21.clef.Clef))
+        assert any(isinstance(c, music21.clef.Treble8vbClef) for c in clefs)
+
+    def test_bass_uses_8vb_clef(self, bass_profile):
+        import music21.clef
+        score = ScoreBuilder(bass_profile, _make_tempo()).build([_make_note(28, 1.0)])
+        clefs = list(score.flatten().getElementsByClass(music21.clef.Clef))
+        assert any(
+            (isinstance(c, music21.clef.BassClef) and getattr(c, "octaveChange", 0) == -1)
+            or type(c).__name__ == "Bass8vbClef"
+            for c in clefs
+        )
+
+    def test_build_raw_stays_at_sounding_pitch(self, guitar_profile):
+        """build_raw() must NOT apply the octave offset — it feeds MIDI export."""
+        notes = [_make_note(60, 1.0)]
+        score = ScoreBuilder(guitar_profile, _make_tempo()).build_raw(notes)
+        score_notes = list(score.flatten().getElementsByClass(music21.note.Note))
+        assert score_notes[0].pitch.midi == 60
+
+    def test_tempo_mark_is_rounded(self, guitar_profile):
+        """Fractional BPM from librosa must be rounded to nearest integer."""
+        notes = [_make_note(60, 1.0)]
+        builder = ScoreBuilder(guitar_profile, _make_tempo(bpm=142.7))
+        score = builder.build(notes)
+        marks = list(score.flatten().getElementsByClass(music21.tempo.MetronomeMark))
+        assert marks[0].number == 143
+
+    def test_build_raw_quantized_preserves_timing(self, guitar_profile):
+        """build_raw with quantized notes preserves beat offsets and sounding pitch."""
+        notes = [_make_note(60, 1.0, 0.0), _make_note(64, 1.0, 1.0)]
+        score = ScoreBuilder(guitar_profile, _make_tempo()).build_raw(notes)
+        score_notes = list(score.flatten().getElementsByClass(music21.note.Note))
+        assert len(score_notes) == 2
+        assert score_notes[0].pitch.midi == 60
+        assert score_notes[1].pitch.midi == 64
