@@ -23,23 +23,18 @@ from tests.integration.conftest import SAMPLE_ROOT, make_pipeline_fixtures
 
 SAMPLE_PATH = SAMPLE_ROOT / "guitar" / "6_string_electric_line_in.mp3"
 INSTRUMENT = Instrument.GUITAR
-NOTE_COUNT = 8
+NOTE_COUNT = 6
 EXPECTED_DURATION_S = 13.4
 
-# Concert (sounding) MIDI as detected by the pipeline.
-# The electric line-in sample produces extra onsets: G3 and B3 strings each
-# trigger a short spurious re-onset. The high-E string is detected as E3
-# (MIDI 52) rather than E4 (MIDI 64) due to electric guitar sustain/pickup
-# characteristics. Actual detected sequence: E2 A2 D3 G3 G3 B3 B3 E3
-EXPECTED_MIDI = [40, 45, 50, 55, 55, 59, 59, 52]
+# Concert (sounding) MIDI, low string → high string: E2 A2 D3 G3 B3 E4
+EXPECTED_MIDI = [40, 45, 50, 55, 59, 64]
 
 # Written MIDI: guitar transpose_semitones=-12 → written = midi_note + 12
-EXPECTED_WRITTEN_MIDI = [52, 57, 62, 64, 67, 67, 71, 71]
+# Produces: E3 A3 D4 G4 B4 E5
+EXPECTED_WRITTEN_MIDI = [52, 57, 62, 67, 71, 76]
 
-# Tab assignments as produced by the pipeline for this sample.
-# G3 appears twice (string 3, fret 0), B3 appears twice (string 4, fret 0),
-# and the last note (MIDI 52 = E3) lands on string 2, fret 2.
-EXPECTED_TAB = [(0, 0), (1, 0), (2, 0), (3, 0), (3, 0), (4, 0), (4, 0), (2, 2)]
+# Tab: every open string → (string_idx, fret=0), 0-based from lowest string
+EXPECTED_TAB = [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0)]
 
 # Clef: "treble8vb" → sign='G', octaveChange=-1
 EXPECTED_CLEF_SIGN = "G"
@@ -102,8 +97,8 @@ class TestPitchResult:
 # Stage: onsets
 # ---------------------------------------------------------------------------
 
-ONSET_COUNT_MIN = 8
-ONSET_COUNT_MAX = 11
+ONSET_COUNT_MIN = 6
+ONSET_COUNT_MAX = 8
 
 
 class TestOnsets:
@@ -212,15 +207,13 @@ class TestTabAssignments:
     def test_tab_length(self, tab_assignments, quantized_notes):
         assert len(tab_assignments) == len(quantized_notes)
 
-    def test_tab_frets_match_expected(self, tab_assignments):
-        # Most notes are open strings (fret 0); the pipeline assigns the last
-        # note (MIDI 52, detected as E3) to string 2 fret 2.
-        non_none = [a for a in tab_assignments if a is not None]
-        actual_frets = [fret for _, fret in non_none]
-        expected_frets = [fret for _, fret in EXPECTED_TAB]
-        assert actual_frets == expected_frets, (
-            f"Frets {actual_frets} != expected {expected_frets}"
-        )
+    def test_tab_all_fret_zero(self, tab_assignments):
+        for assignment in tab_assignments:
+            if assignment is not None:
+                _, fret = assignment
+                assert fret == 0, (
+                    f"Open string expected fret 0, got {fret}"
+                )
 
     def test_tab_exact_string_assignments(self, tab_assignments):
         # Compare in onset order (low string played first = ascending MIDI order)

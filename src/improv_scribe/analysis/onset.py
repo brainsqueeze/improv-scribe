@@ -68,12 +68,13 @@ class OnsetDetector:
             hop_length=hop,
         )
 
-        # Minimum gap between onsets in frames.  Librosa's default wait=1 (~12 ms)
-        # fires 2-3 times per guitar pluck due to attack + harmonic-settling
-        # transients.  80 ms enforces one detection per physical pluck event.
-        wait_frames = max(1, round(0.080 * sr / hop))
+        # Minimum gap between onsets in frames.  150 ms enforces one detection
+        # per physical pluck event and suppresses harmonic-settling transients.
+        wait_frames = max(1, round(0.150 * sr / hop))
 
-        # Peak-pick with backtrack to physical onset position
+        # Peak-pick with backtrack to physical onset position.
+        # delta=0.15 suppresses low-strength spurious onsets caused by harmonic
+        # evolution of sustained notes (empirically measured threshold).
         onset_frames = librosa.onset.onset_detect(
             onset_envelope=onset_env,
             sr=sr,
@@ -81,6 +82,7 @@ class OnsetDetector:
             backtrack=True,
             units="frames",
             wait=wait_frames,
+            delta=0.15,
         )
 
         onset_times = librosa.frames_to_time(onset_frames, sr=sr, hop_length=hop)

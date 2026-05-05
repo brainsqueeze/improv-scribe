@@ -1,11 +1,11 @@
 """
-tests/integration/test_guitar_acoustic_mic.py
+tests/integration/test_bass_line_in.py
 
 End-to-end pipeline regression tests for:
-    samples/guitar/6_string_acoustic_mic.mp3
+    samples/bass/4_string_bass_line_in.mp3
 
-The sample plays each open string of a calibrated acoustic guitar (mic)
-from low to high: E2 A2 D3 G3 B3 E4. One note per string, six total.
+The sample plays each open string of a calibrated 4-string bass (line-in)
+from low to high: E1 A1 D2 G2. One note per string, four total.
 """
 
 from __future__ import annotations
@@ -21,23 +21,23 @@ from tests.integration.conftest import SAMPLE_ROOT, make_pipeline_fixtures
 # Ground truth
 # ---------------------------------------------------------------------------
 
-SAMPLE_PATH = SAMPLE_ROOT / "guitar" / "6_string_acoustic_mic.mp3"
-INSTRUMENT = Instrument.GUITAR
-NOTE_COUNT = 6
-EXPECTED_DURATION_S = 13.4
+SAMPLE_PATH = SAMPLE_ROOT / "bass" / "4_string_bass_line_in.mp3"
+INSTRUMENT = Instrument.BASS
+NOTE_COUNT = 4
+EXPECTED_DURATION_S = 12.3
 
-# Concert (sounding) MIDI, low string → high string: E2 A2 D3 G3 B3 E4
-EXPECTED_MIDI = [40, 45, 50, 55, 59, 64]
+# Concert (sounding) MIDI, low string → high string: E1 A1 D2 G2
+EXPECTED_MIDI = [28, 33, 38, 43]
 
-# Written MIDI: guitar transpose_semitones=-12 → written = midi_note + 12
-# Produces: E3 A3 D4 G4 B4 E5
-EXPECTED_WRITTEN_MIDI = [52, 57, 62, 67, 71, 76]
+# Written MIDI: bass transpose_semitones=-12 → written = midi_note + 12
+# Produces: E2 A2 D3 G3
+EXPECTED_WRITTEN_MIDI = [40, 45, 50, 55]
 
 # Tab: every open string → (string_idx, fret=0), 0-based from lowest string
-EXPECTED_TAB = [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0)]
+EXPECTED_TAB = [(0, 0), (1, 0), (2, 0), (3, 0)]
 
-# Clef: "treble8vb" → sign='G', octaveChange=-1
-EXPECTED_CLEF_SIGN = "G"
+# Clef: "bass8vb" → sign='F', octaveChange=-1
+EXPECTED_CLEF_SIGN = "F"
 
 # ---------------------------------------------------------------------------
 # Fixture chain — runs the full pipeline once for this module
@@ -97,8 +97,8 @@ class TestPitchResult:
 # Stage: onsets
 # ---------------------------------------------------------------------------
 
-ONSET_COUNT_MIN = 6
-ONSET_COUNT_MAX = 8
+ONSET_COUNT_MIN = 4
+ONSET_COUNT_MAX = 6
 
 
 class TestOnsets:

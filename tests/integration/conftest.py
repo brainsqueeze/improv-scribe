@@ -60,7 +60,7 @@ def make_pipeline_fixtures(sample_path: Path, instrument: Instrument) -> tuple:
     @pytest.fixture(scope="module")
     def pitch_result(audio):
         y, _ = audio
-        estimator = PitchEstimator(_config, backend="pyin")
+        estimator = PitchEstimator(_config, backend=_config.pitch_backend)
         return estimator.estimate(y, _profile)
 
     @pytest.fixture(scope="module")

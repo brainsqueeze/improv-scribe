@@ -88,6 +88,45 @@ def hz_to_midi(freq_hz: float) -> tuple[int, float]:
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+# Maximum silence between two same-pitch events to treat as a single note.
+# Spurious re-onsets caused by harmonic evolution appear within 600 ms;
+# intentional repeated notes at ≥80 BPM have gaps ≥375 ms but are typically
+# accompanied by a fresh attack, so we use a conservative 600 ms ceiling.
+_MERGE_GAP_S: float = 0.600
+
+
+def _merge_consecutive_same_pitch(events: list[NoteEvent]) -> list[NoteEvent]:
+    """Merge back-to-back NoteEvents with identical pitch if the gap is small.
+
+    Handles phantom re-onsets that appear when onset_detect fires on harmonic
+    evolution of a sustained note (e.g. the B3 string triggering twice).
+    """
+    if not events:
+        return events
+
+    merged: list[NoteEvent] = [events[0]]
+    for current in events[1:]:
+        prev = merged[-1]
+        gap = current.onset_s - prev.offset_s
+        if current.midi_note == prev.midi_note and gap <= _MERGE_GAP_S:
+            # Extend previous event to cover the full duration of both
+            merged[-1] = NoteEvent(
+                onset_s=prev.onset_s,
+                offset_s=current.offset_s,
+                midi_note=prev.midi_note,
+                frequency_hz=(prev.frequency_hz + current.frequency_hz) / 2.0,
+                confidence=(prev.confidence + current.confidence) / 2.0,
+                cents_deviation=(prev.cents_deviation + current.cents_deviation) / 2.0,
+            )
+        else:
+            merged.append(current)
+    return merged
+
+
+# ---------------------------------------------------------------------------
 # NoteTracker
 # ---------------------------------------------------------------------------
 
@@ -178,4 +217,5 @@ class NoteTracker:
                 cents_deviation=cents_dev,
             ))
 
-        return sorted(events, key=lambda e: e.onset_s)
+        sorted_events = sorted(events, key=lambda e: e.onset_s)
+        return _merge_consecutive_same_pitch(sorted_events)
