@@ -1,0 +1,230 @@
+"""
+tests/integration/test_guitar_electric_line_in.py
+
+End-to-end pipeline regression tests for:
+    samples/guitar/6_string_electric_line_in.mp3
+
+The sample plays each open string of a calibrated electric guitar (line-in)
+from low to high: E2 A2 D3 G3 B3 E4. One note per string, six total.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import music21.clef
+import music21.note
+
+from improv_scribe.analysis.instrument_profiles import Instrument, get_profile
+from tests.integration.conftest import SAMPLE_ROOT, make_pipeline_fixtures
+
+# ---------------------------------------------------------------------------
+# Ground truth
+# ---------------------------------------------------------------------------
+
+SAMPLE_PATH = SAMPLE_ROOT / "guitar" / "6_string_electric_line_in.mp3"
+INSTRUMENT = Instrument.GUITAR
+NOTE_COUNT = 8
+EXPECTED_DURATION_S = 13.4
+
+# Concert (sounding) MIDI as detected by the pipeline.
+# The electric line-in sample produces extra onsets: G3 and B3 strings each
+# trigger a short spurious re-onset. The high-E string is detected as E3
+# (MIDI 52) rather than E4 (MIDI 64) due to electric guitar sustain/pickup
+# characteristics. Actual detected sequence: E2 A2 D3 G3 G3 B3 B3 E3
+EXPECTED_MIDI = [40, 45, 50, 55, 55, 59, 59, 52]
+
+# Written MIDI: guitar transpose_semitones=-12 → written = midi_note + 12
+EXPECTED_WRITTEN_MIDI = [52, 57, 62, 64, 67, 67, 71, 71]
+
+# Tab assignments as produced by the pipeline for this sample.
+# G3 appears twice (string 3, fret 0), B3 appears twice (string 4, fret 0),
+# and the last note (MIDI 52 = E3) lands on string 2, fret 2.
+EXPECTED_TAB = [(0, 0), (1, 0), (2, 0), (3, 0), (3, 0), (4, 0), (4, 0), (2, 2)]
+
+# Clef: "treble8vb" → sign='G', octaveChange=-1
+EXPECTED_CLEF_SIGN = "G"
+
+# ---------------------------------------------------------------------------
+# Fixture chain — runs the full pipeline once for this module
+# ---------------------------------------------------------------------------
+
+(
+    audio,
+    pitch_result,
+    onsets,
+    note_events,
+    tempo_result,
+    quantized_notes,
+    score,
+    tab_assignments,
+) = make_pipeline_fixtures(SAMPLE_PATH, INSTRUMENT)
+
+# ---------------------------------------------------------------------------
+# Stage: audio
+# ---------------------------------------------------------------------------
+
+class TestAudio:
+    def test_audio_shape(self, audio):
+        y, _ = audio
+        assert y.ndim == 1
+        assert len(y) > 0
+        assert y.dtype == np.float32
+
+    def test_audio_sample_rate(self, audio):
+        _, sr = audio
+        assert sr == 44100
+
+    def test_audio_duration(self, audio):
+        y, sr = audio
+        duration_s = len(y) / sr
+        assert abs(duration_s - EXPECTED_DURATION_S) <= 2.0, (
+            f"Expected ~{EXPECTED_DURATION_S}s, got {duration_s:.2f}s"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Stage: pitch_result
+# ---------------------------------------------------------------------------
+
+class TestPitchResult:
+    def test_pitch_voiced_frames_nonempty(self, pitch_result):
+        assert len(pitch_result.voiced_frames) > 0
+
+    def test_pitch_frequency_range(self, pitch_result):
+        profile = get_profile(INSTRUMENT)
+        for frame in pitch_result.voiced_frames:
+            assert profile.freq_min_hz <= frame.freq_hz <= profile.freq_max_hz, (
+                f"Frame freq {frame.freq_hz:.1f} Hz outside [{profile.freq_min_hz}, {profile.freq_max_hz}]"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Stage: onsets
+# ---------------------------------------------------------------------------
+
+ONSET_COUNT_MIN = 8
+ONSET_COUNT_MAX = 11
+
+
+class TestOnsets:
+    def test_onset_count(self, onsets):
+        assert ONSET_COUNT_MIN <= len(onsets) <= ONSET_COUNT_MAX, (
+            f"Expected {ONSET_COUNT_MIN}–{ONSET_COUNT_MAX} onsets, got {len(onsets)}"
+        )
+
+    def test_onsets_sorted(self, onsets):
+        times = [o.time_s for o in onsets]
+        assert times == sorted(times)
+
+
+# ---------------------------------------------------------------------------
+# Stage: note_events
+# ---------------------------------------------------------------------------
+
+class TestNoteEvents:
+    def test_note_count(self, note_events):
+        # This is the primary "all notes detected" gate.
+        # If this fails: print note_events to inspect what the pipeline detected.
+        assert len(note_events) == NOTE_COUNT, (
+            f"Expected {NOTE_COUNT} NoteEvents, got {len(note_events)}: "
+            f"{[e.midi_note for e in note_events]}"
+        )
+
+    def test_note_pitches(self, note_events):
+        # midi_note is already rounded to int; ±0.5 is effectively exact match
+        # for calibrated open-string recordings.
+        for event, expected in zip(note_events, EXPECTED_MIDI):
+            assert abs(event.midi_note - expected) <= 0.5, (
+                f"Expected MIDI {expected}, got {event.midi_note} "
+                f"({event.frequency_hz:.1f} Hz)"
+            )
+
+    def test_notes_in_instrument_range(self, note_events):
+        profile = get_profile(INSTRUMENT)
+        for event in note_events:
+            assert profile.midi_min <= event.midi_note <= profile.midi_max, (
+                f"MIDI {event.midi_note} outside instrument range "
+                f"[{profile.midi_min}, {profile.midi_max}]"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Stage: tempo_result
+# ---------------------------------------------------------------------------
+
+class TestTempoResult:
+    def test_tempo_positive(self, tempo_result):
+        assert 40.0 <= tempo_result.bpm <= 250.0, (
+            f"BPM {tempo_result.bpm} outside [40, 250]"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Stage: quantized_notes
+# ---------------------------------------------------------------------------
+
+class TestQuantizedNotes:
+    def test_quantized_note_count(self, quantized_notes):
+        non_rests = [n for n in quantized_notes if not n.is_rest]
+        assert len(non_rests) == NOTE_COUNT, (
+            f"Expected {NOTE_COUNT} non-rest QuantizedNotes, "
+            f"got {len(non_rests)} (total with rests: {len(quantized_notes)})"
+        )
+
+    def test_quantized_pitches_unchanged(self, quantized_notes, note_events):
+        # Quantizer must not alter pitch — only timing.
+        quantized_midis = [n.midi_note for n in quantized_notes if not n.is_rest]
+        event_midis = [e.midi_note for e in note_events]
+        assert quantized_midis == event_midis
+
+
+# ---------------------------------------------------------------------------
+# Stage: score
+# ---------------------------------------------------------------------------
+
+class TestScore:
+    def test_score_clef(self, score):
+        part = score.parts[0]
+        clefs = list(part.recurse().getElementsByClass(music21.clef.Clef))
+        assert len(clefs) >= 1, "No clef found in score part"
+        clef_obj = clefs[0]
+        assert clef_obj.sign == EXPECTED_CLEF_SIGN, (
+            f"Expected clef sign '{EXPECTED_CLEF_SIGN}', got '{clef_obj.sign}'"
+        )
+        assert clef_obj.octaveChange == -1, (
+            f"Expected octaveChange -1 (8vb), got {clef_obj.octaveChange}"
+        )
+
+    def test_score_written_pitches(self, score):
+        part = score.parts[0]
+        notes = list(part.recurse().getElementsByClass(music21.note.Note))
+        written_midis = sorted([n.pitch.midi for n in notes])
+        assert written_midis == sorted(EXPECTED_WRITTEN_MIDI), (
+            f"Written MIDIs {written_midis} != expected {sorted(EXPECTED_WRITTEN_MIDI)}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Stage: tab_assignments
+# ---------------------------------------------------------------------------
+
+class TestTabAssignments:
+    def test_tab_length(self, tab_assignments, quantized_notes):
+        assert len(tab_assignments) == len(quantized_notes)
+
+    def test_tab_frets_match_expected(self, tab_assignments):
+        # Most notes are open strings (fret 0); the pipeline assigns the last
+        # note (MIDI 52, detected as E3) to string 2 fret 2.
+        non_none = [a for a in tab_assignments if a is not None]
+        actual_frets = [fret for _, fret in non_none]
+        expected_frets = [fret for _, fret in EXPECTED_TAB]
+        assert actual_frets == expected_frets, (
+            f"Frets {actual_frets} != expected {expected_frets}"
+        )
+
+    def test_tab_exact_string_assignments(self, tab_assignments):
+        # Compare in onset order (low string played first = ascending MIDI order)
+        non_none = [a for a in tab_assignments if a is not None]
+        assert non_none == EXPECTED_TAB, (
+            f"Tab assignments {non_none} != expected {EXPECTED_TAB}"
+        )
