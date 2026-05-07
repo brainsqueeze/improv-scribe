@@ -175,6 +175,32 @@ conda run -n auto-sheet-music pytest -k "test_pitch"       # filter by name
 conda run -n auto-sheet-music pytest --cov=improv_scribe  # with coverage
 ```
 
+### Required integration tests after analysis pipeline changes
+
+Any change to `src/improv_scribe/analysis/`, `src/improv_scribe/capture/`,
+`src/improv_scribe/quantization/`, or `src/improv_scribe/config.py` **must** be
+followed by a passing run of all four sample-based integration tests before the
+work is considered complete:
+
+```bash
+conda run -n auto-sheet-music pytest tests/integration/ -v
+```
+
+These tests run the full pipeline end-to-end against real recordings of open
+strings (EADGBE for guitar, EADG for bass) and assert exact pitch, fret, and
+tab correctness. They are the primary regression gate for analysis accuracy.
+
+| Test file | Sample | Verifies |
+|---|---|---|
+| `tests/integration/test_guitar_electric_line_in.py` | `samples/guitar/6_string_electric_line_in.mp3` | Clean signal baseline — must pass first |
+| `tests/integration/test_guitar_acoustic_mic.py` | `samples/guitar/6_string_acoustic_mic.mp3` | Mic noise, room acoustics, octave-error robustness |
+| `tests/integration/test_guitar_acoustic_line_in.py` | `samples/guitar/6_string_acoustic_line_in.mp3` | Acoustic line-in (no mic noise) |
+| `tests/integration/test_bass_line_in.py` | `samples/bass/4_string_bass_line_in.mp3` | Bass range, low-frequency accuracy |
+
+Start with the electric guitar line-in test (cleanest signal). If it fails, fix
+that before checking the others — a failure there indicates a fundamental pipeline
+bug rather than a noise/edge-case issue.
+
 ## Linting
 
 Use **Ruff** for linting (included in the conda environment):

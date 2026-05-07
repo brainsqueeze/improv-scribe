@@ -70,9 +70,10 @@ def make_pipeline_fixtures(sample_path: Path, instrument: Instrument) -> tuple:
         return detector.detect(y)
 
     @pytest.fixture(scope="module")
-    def note_events(pitch_result, onsets):
+    def note_events(audio, pitch_result, onsets):
+        y, _ = audio
         tracker = NoteTracker(_config, _profile)
-        return tracker.process(pitch_result, onsets)
+        return tracker.process(pitch_result, onsets, audio=y)
 
     @pytest.fixture(scope="module")
     def tempo_result(note_events):

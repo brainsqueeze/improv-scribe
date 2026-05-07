@@ -88,7 +88,166 @@ def hz_to_midi(freq_hz: float) -> tuple[int, float]:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Octave-error correction
+# ---------------------------------------------------------------------------
+
+# Fraction of CREPE frames in a note window that must be near the sub-octave
+# for the frame-based correction to fire.
+_SUBOCTAVE_FRAME_FRACTION: float = 0.15
+
+# Frequency tolerance for "near sub-octave" check (±2 semitones ≈ ratio 1.122).
+_SUBOCTAVE_SEMITONE_TOLERANCE: float = 2.0
+
+# Minimum ratio of sub-octave spectral energy to detected-frequency energy for
+# the spectral fallback to conclude the detected pitch is a harmonic error.
+# CREPE on mic'd acoustic guitar can lock onto the 2nd harmonic (e.g. E3 instead
+# of E2) with full confidence; in that case zero CREPE frames land near the true
+# fundamental, so the frame-based check fails.  The spectral check looks directly
+# at the raw audio: the true fundamental always has acoustic energy even when
+# weaker than its harmonics, while a non-harmonic sub-octave (e.g. G2 when
+# playing G3) will have near-zero energy.  10 % is conservative enough to avoid
+# false corrections on correctly detected notes.
+_SPECTRAL_SUBOCTAVE_RATIO: float = 0.20
+
+# Tighter semitone tolerance used only by the spectral check (±1 semitone).
+# The frame-based check uses _SUBOCTAVE_SEMITONE_TOLERANCE (±2 semitones) because
+# CREPE frames can drift slightly from the true pitch.  The FFT bin for the
+# correct fundamental is accurate, so ±1 semitone is sufficient and prevents
+# adjacent open strings (spaced 5 semitones apart) from bleeding into the band.
+# Example: G2 (98 Hz) ±1 st = [92.5, 103.8 Hz]; A2 (110 Hz) stays outside,
+# while G2 ±2 st = [87.4, 110.2 Hz] accidentally includes A2.
+_SPECTRAL_SEMITONE_TOLERANCE: float = 1.0
+
+# Minimum RMS of the audio window before the spectral check is considered
+# reliable.  Background noise in a near-silent window (e.g. the decaying tail
+# of a sustained note) produces roughly equal spectral energy at all frequencies,
+# making the sub-octave ratio meaningless.  0.01 matches the noise gate RMS floor
+# used during live capture, so the spectral check only fires on windows where an
+# active guitar signal is present.
+_MIN_SIGNAL_RMS: float = 0.01
+
+
+def _spectral_sub_octave_present(
+    audio_window: np.ndarray,
+    freq_hz: float,
+    sample_rate: int,
+) -> bool:
+    """Return True if freq_hz/2 has notable acoustic energy in *audio_window*.
+
+    Computes the magnitude spectrum and compares energy in a ±2-semitone band
+    around freq_hz/2 vs freq_hz.  A ratio ≥ _SPECTRAL_SUBOCTAVE_RATIO indicates
+    that freq_hz is likely a harmonic and the true fundamental is freq_hz/2.
+
+    Parameters
+    ----------
+    audio_window : np.ndarray
+        Raw audio samples for the note's onset window.
+    freq_hz : float
+        Frequency CREPE reported (potentially a harmonic error).
+    sample_rate : int
+
+    Returns
+    -------
+    bool
+    """
+    if len(audio_window) < 256:
+        return False
+
+    if float(np.sqrt(np.mean(audio_window ** 2))) < _MIN_SIGNAL_RMS:
+        return False
+
+    sub_hz = freq_hz / 2.0
+    # Need at least 4 complete periods of sub_hz for reliable bin resolution.
+    min_samples = max(256, int(4 * sample_rate / sub_hz))
+    n_fft = 1
+    while n_fft < min_samples:
+        n_fft <<= 1
+    n_fft = min(n_fft, len(audio_window))
+
+    window_fn = np.hanning(n_fft)
+    spectrum = np.abs(np.fft.rfft(audio_window[:n_fft] * window_fn))
+    freqs_arr = np.fft.rfftfreq(n_fft, d=1.0 / sample_rate)
+
+    tol = 2.0 ** (_SPECTRAL_SEMITONE_TOLERANCE / 12.0)
+
+    def band_energy(target_hz: float) -> float:
+        mask = (freqs_arr >= target_hz / tol) & (freqs_arr <= target_hz * tol)
+        return float(np.sum(spectrum[mask] ** 2))
+
+    energy_f = band_energy(freq_hz)
+    if energy_f == 0.0:
+        return False
+
+    return band_energy(sub_hz) / energy_f >= _SPECTRAL_SUBOCTAVE_RATIO
+
+
+def _correct_octave_error(
+    median_freq: float,
+    active_frames_hz: np.ndarray,
+    profile: InstrumentProfile,
+    audio_window: np.ndarray | None = None,
+    sample_rate: int | None = None,
+) -> float:
+    """Return *median_freq / 2* when sub-octave evidence is present.
+
+    CREPE often reports the 2nd harmonic instead of the fundamental on mic'd
+    acoustic guitar (e.g. A3 instead of A2).  Two checks are applied in order:
+
+    1. **Frame check** — if ≥15 % of voiced CREPE frames fall within ±2 semitones
+       of the sub-octave, the fundamental was partially detected.
+    2. **Spectral fallback** — if the frame check fails (CREPE was 100 % confident
+       in the wrong octave), inspect the raw audio spectrum.  The true fundamental
+       always has some acoustic energy; a non-harmonic sub-octave (e.g. G2 when
+       playing G3) does not.
+
+    Parameters
+    ----------
+    median_freq : float
+        Median pitch across voiced frames for this note window (Hz).
+    active_frames_hz : np.ndarray
+        Array of per-frame frequencies from CREPE (finite values only).
+    profile : InstrumentProfile
+        Used to validate that the corrected frequency is within instrument range.
+    audio_window : np.ndarray | None
+        Raw audio samples for the onset window.  Required for the spectral
+        fallback; if None only the frame check is applied.
+    sample_rate : int | None
+        Required when *audio_window* is provided.
+
+    Returns
+    -------
+    float
+        Corrected frequency (Hz).
+    """
+    sub_hz = median_freq / 2.0
+    if not (profile.freq_min_hz <= sub_hz <= profile.freq_max_hz):
+        return median_freq
+
+    # Frame-based check: some CREPE frames are near the true fundamental.
+    tol = 2.0 ** (_SUBOCTAVE_SEMITONE_TOLERANCE / 12.0)
+    near_sub = np.sum(
+        (active_frames_hz >= sub_hz / tol) & (active_frames_hz <= sub_hz * tol)
+    )
+    if near_sub / len(active_frames_hz) >= _SUBOCTAVE_FRAME_FRACTION:
+        return sub_hz
+
+    # Spectral fallback: CREPE was fully confident in the wrong octave; check
+    # the raw audio for sub-octave acoustic energy.
+    # Limited to notes strictly below profile.midi_min + 24 (two octaves above
+    # the lowest open string).  On acoustic guitars, body resonance creates
+    # enough sub-octave energy near the highest open string to trigger a false
+    # correction — e.g. E3 body resonance while E4 is played on a mic'd guitar.
+    if audio_window is not None and sample_rate is not None:
+        detected_midi, _ = hz_to_midi(median_freq)
+        if detected_midi < profile.midi_min + 24:
+            if _spectral_sub_octave_present(audio_window, median_freq, sample_rate):
+                return sub_hz
+
+    return median_freq
+
+
+# ---------------------------------------------------------------------------
+# Merge helper
 # ---------------------------------------------------------------------------
 
 # Maximum silence between two same-pitch events to treat as a single note.
@@ -156,6 +315,7 @@ class NoteTracker:
         pitch_result: PitchResult,
         onsets: list[Onset],
         chunk_offset_s: float = 0.0,
+        audio: np.ndarray | None = None,
     ) -> list[NoteEvent]:
         """
         Produce NoteEvents from a chunk's pitch + onset data.
@@ -166,6 +326,10 @@ class NoteTracker:
         onsets : list[Onset]
         chunk_offset_s : float
             Add this to all times so they are session-absolute, not chunk-relative.
+        audio : np.ndarray | None
+            Raw audio samples (full recording or chunk, 1-D float32).  When
+            provided, enables the spectral octave-error fallback in addition to
+            the frame-based check.  Strongly recommended for live mic recordings.
 
         Returns
         -------
@@ -178,6 +342,7 @@ class NoteTracker:
         if not voiced:
             return []
 
+        sr = self._config.sample_rate
         events: list[NoteEvent] = []
         onset_times = [o.time_s for o in onsets]
 
@@ -199,7 +364,20 @@ class NoteTracker:
             if len(freqs) == 0:
                 continue
 
+            # Extract raw audio window for spectral octave correction fallback.
+            audio_window: np.ndarray | None = None
+            if audio is not None:
+                s0 = max(0, int(t_start * sr))
+                s1 = min(len(audio), int(t_end * sr))
+                if s1 > s0:
+                    audio_window = audio[s0:s1]
+
             median_freq = float(np.median(freqs))
+            median_freq = _correct_octave_error(
+                median_freq, freqs, self._profile,
+                audio_window=audio_window,
+                sample_rate=sr,
+            )
             mean_conf = float(np.mean([f.confidence for f in active_frames]))
 
             midi_note, cents_dev = hz_to_midi(median_freq)

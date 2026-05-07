@@ -260,7 +260,7 @@ class MainWindow(QMainWindow):
 
             # 3. Assemble NoteEvents
             tracker = NoteTracker(config, profile)
-            events = tracker.process(pitch_result, onsets)
+            events = tracker.process(pitch_result, onsets, audio=audio)
 
             if not events:
                 self._signaller.processing_failed.emit(

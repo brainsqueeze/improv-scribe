@@ -74,7 +74,7 @@ class TransportBar(QWidget):
         # -- Backend --
         layout.addWidget(QLabel("Pitch:"))
         self._backend_combo = QComboBox()
-        self._backend_combo.addItems(["pYIN", "CREPE"])
+        self._backend_combo.addItems(["CREPE", "pYIN"])
         self._backend_combo.currentTextChanged.connect(
             lambda t: self.backend_changed.emit(t.lower())
         )
