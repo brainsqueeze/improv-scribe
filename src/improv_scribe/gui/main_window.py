@@ -281,6 +281,14 @@ class MainWindow(QMainWindow):
                 # Store for tab injection at export time (set before signal fires)
                 self._last_quantized_notes = quantized_notes
                 self._last_tab_assignments = score_builder.compute_tab_assignments(quantized_notes)
+                _NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+                def _midi_name(m: int) -> str:
+                    return _NOTE_NAMES[m % 12] + str(m // 12 - 1)
+                _debug = [
+                    (a, _midi_name(n.midi_note)) if a is not None else (None, "rest")
+                    for n, a in zip(quantized_notes, self._last_tab_assignments)
+                ]
+                print("[TAB DEBUG] (assignment, note):", _debug)
                 self._last_profile = profile
             else:
                 # Raw mode: build a minimal score for MIDI (no PDF grid)

@@ -43,16 +43,18 @@ from improv_scribe.quantization.grid import QuantizedNote
 
 # ---------------------------------------------------------------------------
 # Tuning data for <staff-tuning> elements
-# Strings ordered high → low (line 1 = highest string in MusicXML convention)
-# Each entry is (step, octave) where step is the note letter name.
+# Strings ordered high → low, indexed by MusicXML line number (line 1 = high
+# string in our numbering, which aligns with <string>1</string> = high string).
+# Values are SOUNDING pitch.  inject_tab_part also writes <transpose chromatic=N>
+# so MuseScore correctly converts written → sounding before computing fret positions.
 # ---------------------------------------------------------------------------
 
-# Guitar: string 1 (high E4) → string 6 (low E2)
+# Guitar: string 1 (high E4 sounding) → string 6 (low E2 sounding)
 GUITAR_STAFF_TUNING: list[tuple[str, int]] = [
     ("E", 4), ("B", 3), ("G", 3), ("D", 3), ("A", 2), ("E", 2),
 ]
 
-# Bass: string 1 (high G2) → string 4 (low E1)
+# Bass: string 1 (high G2 sounding) → string 4 (low E1 sounding)
 BASS_STAFF_TUNING: list[tuple[str, int]] = [
     ("G", 2), ("D", 2), ("A", 1), ("E", 1),
 ]
@@ -113,6 +115,9 @@ def inject_tab_part(
     # -----------------------------------------------------------------------
     # Build note_assignment_map: id(note_el) → (string_idx, fret)
     # Only non-rest XML notes are matched; music21-inserted rests are skipped.
+    # Tied continuation notes (tie type="stop") do not consume a new assignment;
+    # they reuse the assignment from the note they continue so that the TAB staff
+    # shows the same fret for the duration of the tie.
     # -----------------------------------------------------------------------
     pitched_assignments = [a for a in assignments if a is not None]
     pitched_iter = iter(pitched_assignments)
@@ -120,13 +125,22 @@ def inject_tab_part(
     def _is_rest_element(note_el: ET.Element) -> bool:
         return note_el.find(tag("rest")) is not None
 
+    def _is_tie_continuation(note_el: ET.Element) -> bool:
+        return any(t.get("type") == "stop" for t in note_el.findall(tag("tie")))
+
     note_assignment_map: dict[int, tuple[int, int]] = {}
+    current_assignment: tuple[int, int] | None = None
     for measure_el in p1.findall(tag("measure")):
         for note_el in measure_el.findall(tag("note")):
-            if not _is_rest_element(note_el):
-                assignment = next(pitched_iter, None)
-                if assignment is not None:
-                    note_assignment_map[id(note_el)] = assignment
+            if _is_rest_element(note_el):
+                pass  # rests never appear mid-tie; don't reset current_assignment
+            elif _is_tie_continuation(note_el):
+                if current_assignment is not None:
+                    note_assignment_map[id(note_el)] = current_assignment
+            else:
+                current_assignment = next(pitched_iter, None)
+                if current_assignment is not None:
+                    note_assignment_map[id(note_el)] = current_assignment
 
     # -----------------------------------------------------------------------
     # Process the first measure: inject <staves>, tab clef, staff-details
@@ -140,7 +154,7 @@ def inject_tab_part(
         attrs_el = ET.Element(tag("attributes"))
         first_measure.insert(0, attrs_el)
 
-    _inject_two_staves_attributes(attrs_el, tuning_data, tag)
+    _inject_two_staves_attributes(attrs_el, tuning_data, tag, profile.transpose_semitones)
 
     # -----------------------------------------------------------------------
     # For every measure: annotate staff-1 notes and insert staff-2 copies
@@ -159,8 +173,16 @@ def _inject_two_staves_attributes(
     attrs_el: ET.Element,
     tuning_data: list[tuple[str, int]],
     tag: Callable[[str], str],
+    transpose_semitones: int = 0,
 ) -> None:
-    """Add ``<staves>2</staves>``, a numbered tab ``<clef>``, and ``<staff-details>``."""
+    """Add ``<staves>2</staves>``, a numbered tab ``<clef>``, ``<staff-details>``,
+    and (when *transpose_semitones* is non-zero) a ``<transpose>`` element.
+
+    The ``<transpose>`` element is required when the score is in written pitch
+    (e.g. guitar, written an octave above sounding).  Without it MuseScore treats
+    note pitch as concert pitch and cannot correctly compute TAB fret positions
+    against the sounding-pitch string tuning values.
+    """
     n_strings = len(tuning_data)
 
     # <staves>2</staves> — must appear before <clef> per MusicXML schema
@@ -196,6 +218,11 @@ def _inject_two_staves_attributes(
         step_el.text = step
         octave_el = ET.SubElement(st, tag("tuning-octave"))
         octave_el.text = str(octave)
+
+    if transpose_semitones != 0:
+        transpose_el = ET.SubElement(attrs_el, tag("transpose"))
+        chromatic_el = ET.SubElement(transpose_el, tag("chromatic"))
+        chromatic_el.text = str(transpose_semitones)
 
 
 def _annotate_measure(
