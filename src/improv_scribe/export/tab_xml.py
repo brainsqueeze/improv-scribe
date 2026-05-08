@@ -42,21 +42,22 @@ from improv_scribe.analysis.instrument_profiles import Instrument, InstrumentPro
 from improv_scribe.quantization.grid import QuantizedNote
 
 # ---------------------------------------------------------------------------
-# Tuning data for <staff-tuning> elements
-# Strings ordered high → low, indexed by MusicXML line number (line 1 = high
-# string in our numbering, which aligns with <string>1</string> = high string).
-# Values are SOUNDING pitch.  inject_tab_part also writes <transpose chromatic=N>
-# so MuseScore correctly converts written → sounding before computing fret positions.
+# Tuning data for <staff-tuning> elements.
+#
+# MusicXML spec: <staff-tuning line="N"> numbers staff lines from the BOTTOM
+# up (line 1 = bottom).  In standard guitar/bass tab the bottom line is the
+# lowest-pitched string, so tunings are ordered low → high.  Values are
+# sounding pitch.
 # ---------------------------------------------------------------------------
 
-# Guitar: string 1 (high E4 sounding) → string 6 (low E2 sounding)
+# Guitar: line 1 (bottom, low E2) → line 6 (top, high E4)
 GUITAR_STAFF_TUNING: list[tuple[str, int]] = [
-    ("E", 4), ("B", 3), ("G", 3), ("D", 3), ("A", 2), ("E", 2),
+    ("E", 2), ("A", 2), ("D", 3), ("G", 3), ("B", 3), ("E", 4),
 ]
 
-# Bass: string 1 (high G2 sounding) → string 4 (low E1 sounding)
+# Bass: line 1 (bottom, low E1) → line 4 (top, high G2)
 BASS_STAFF_TUNING: list[tuple[str, int]] = [
-    ("G", 2), ("D", 2), ("A", 1), ("E", 1),
+    ("E", 1), ("A", 1), ("D", 2), ("G", 2),
 ]
 
 _STAFF_TUNING: dict[Instrument, list[tuple[str, int]]] = {
@@ -154,7 +155,7 @@ def inject_tab_part(
         attrs_el = ET.Element(tag("attributes"))
         first_measure.insert(0, attrs_el)
 
-    _inject_two_staves_attributes(attrs_el, tuning_data, tag, profile.transpose_semitones)
+    _inject_two_staves_attributes(attrs_el, tuning_data, tag)
 
     # -----------------------------------------------------------------------
     # For every measure: annotate staff-1 notes and insert staff-2 copies
@@ -173,15 +174,13 @@ def _inject_two_staves_attributes(
     attrs_el: ET.Element,
     tuning_data: list[tuple[str, int]],
     tag: Callable[[str], str],
-    transpose_semitones: int = 0,
 ) -> None:
-    """Add ``<staves>2</staves>``, a numbered tab ``<clef>``, ``<staff-details>``,
-    and (when *transpose_semitones* is non-zero) a ``<transpose>`` element.
+    """Add ``<staves>2</staves>``, a numbered tab ``<clef>``, and ``<staff-details>``.
 
-    The ``<transpose>`` element is required when the score is in written pitch
-    (e.g. guitar, written an octave above sounding).  Without it MuseScore treats
-    note pitch as concert pitch and cannot correctly compute TAB fret positions
-    against the sounding-pitch string tuning values.
+    The score is written at concert pitch with a ``treble8vb`` / ``bass8vb`` clef
+    that carries the octave-display offset via ``<clef-octave-change>``.  No
+    ``<transpose>`` element is emitted: combining ``<transpose>`` with
+    ``<clef-octave-change>`` causes MuseScore to mis-compute TAB fret positions.
     """
     n_strings = len(tuning_data)
 
@@ -218,11 +217,6 @@ def _inject_two_staves_attributes(
         step_el.text = step
         octave_el = ET.SubElement(st, tag("tuning-octave"))
         octave_el.text = str(octave)
-
-    if transpose_semitones != 0:
-        transpose_el = ET.SubElement(attrs_el, tag("transpose"))
-        chromatic_el = ET.SubElement(transpose_el, tag("chromatic"))
-        chromatic_el.text = str(transpose_semitones)
 
 
 def _annotate_measure(

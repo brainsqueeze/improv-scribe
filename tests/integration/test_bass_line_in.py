@@ -29,9 +29,8 @@ EXPECTED_DURATION_S = 12.3
 # Concert (sounding) MIDI, low string → high string: E1 A1 D2 G2
 EXPECTED_MIDI = [28, 33, 38, 43]
 
-# Written MIDI: bass transpose_semitones=-12 → written = midi_note + 12
-# Produces: E2 A2 D3 G3
-EXPECTED_WRITTEN_MIDI = [40, 45, 50, 55]
+# Notes are written at concert pitch (bass8vb clef carries the octave offset).
+EXPECTED_WRITTEN_MIDI = list(EXPECTED_MIDI)
 
 # Tab: every open string → (string_idx, fret=0), 0-based from lowest string
 EXPECTED_TAB = [(0, 0), (1, 0), (2, 0), (3, 0)]

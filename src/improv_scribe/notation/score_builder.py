@@ -9,9 +9,15 @@ The resulting Score object can be:
 
 Guitar transposition
 --------------------
-Guitar is a transposing instrument: it sounds an octave lower than written.
-InstrumentProfile.transpose_semitones = -12 handles this. We write the part
-at concert pitch but mark it as transposing so MuseScore renders it correctly.
+Guitar is conventionally written one octave above sounding pitch (treble8vb /
+bass8vb clef).  We rely on the *clef* alone to communicate the octave offset
+to MuseScore: notes are written at concert (sounding) MIDI, and the clef's
+``<clef-octave-change>`` handles visual placement.
+
+We do NOT pre-shift pitch or emit a ``<transpose>`` element.  Combining
+``<clef-octave-change>`` with ``<transpose>`` causes MuseScore to mis-compute
+TAB fret positions (it overrides explicit ``<technical><fret>`` annotations
+when redundant transposition signals are present).
 
 Tablature
 ---------
@@ -99,10 +105,10 @@ class ScoreBuilder:
         # Single part
         part = music21.stream.Part()
 
-        # Instrument — disable music21's built-in transposition; we apply
-        # transpose_semitones manually to the MIDI note numbers below so that
-        # the written pitch in the MusicXML is already at the correct display
-        # pitch (e.g. guitar sounds E2 but is written as E3).
+        # Instrument — disable music21's built-in transposition.  Guitar's
+        # default music21 transposition would emit a <transpose> element that
+        # conflicts with the treble8vb clef's <clef-octave-change>.  We rely on
+        # the clef alone for octave display.
         m21_instrument_cls = _INSTRUMENT_MAP.get(
             self._profile.instrument, music21.instrument.Guitar
         )
@@ -122,17 +128,14 @@ class ScoreBuilder:
         mm = music21.tempo.MetronomeMark(number=round(self._tempo_result.bpm))
         part.append(mm)
 
-        # Notes and rests.
-        # transpose_semitones is negative for instruments written higher than they sound
-        # (guitar = -12: sounds E2, written E3).  Subtracting a negative offset raises
-        # the MIDI note to the correct written pitch for display.
+        # Notes and rests at concert (sounding) pitch.  The treble8vb /
+        # bass8vb clef carries the octave-display offset; no manual shift here.
         for qn in notes:
             dur = Duration(quarterLength=qn.quarter_length)
             if qn.is_rest:
                 element: music21.note.GeneralNote = music21.note.Rest(duration=dur)
             else:
-                written_midi = qn.midi_note - self._profile.transpose_semitones
-                element = music21.note.Note(written_midi, duration=dur)
+                element = music21.note.Note(qn.midi_note, duration=dur)
 
             part.append(element)
 

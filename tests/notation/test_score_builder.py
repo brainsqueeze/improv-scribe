@@ -134,19 +134,21 @@ class TestScoreBuilder:
 
 
 class TestOctaveTransposition:
-    def test_guitar_note_written_up_octave(self, guitar_profile):
-        """Sounding C4 (MIDI 60) must appear as C5 (MIDI 72) in the score."""
+    def test_guitar_note_at_concert_pitch(self, guitar_profile):
+        """Notes are written at concert pitch; the treble8vb clef carries the
+        octave-display offset."""
         notes = [_make_note(60, 1.0)]
         score = ScoreBuilder(guitar_profile, _make_tempo()).build(notes)
         score_notes = list(score.flatten().getElementsByClass(music21.note.Note))
-        assert score_notes[0].pitch.midi == 72
+        assert score_notes[0].pitch.midi == 60
 
-    def test_bass_note_written_up_octave(self, bass_profile):
-        """Sounding E1 (MIDI 28) must appear as E2 (MIDI 40) in the score."""
+    def test_bass_note_at_concert_pitch(self, bass_profile):
+        """Notes are written at concert pitch; the bass8vb clef carries the
+        octave-display offset."""
         notes = [_make_note(28, 1.0)]
         score = ScoreBuilder(bass_profile, _make_tempo()).build(notes)
         score_notes = list(score.flatten().getElementsByClass(music21.note.Note))
-        assert score_notes[0].pitch.midi == 40
+        assert score_notes[0].pitch.midi == 28
 
     def test_guitar_uses_treble8vb_clef(self, guitar_profile):
         import music21.clef
