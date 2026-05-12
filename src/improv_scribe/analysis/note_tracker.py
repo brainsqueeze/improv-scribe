@@ -36,28 +36,83 @@ from improv_scribe.config import AppConfig
 
 @dataclass
 class NoteEvent:
-    """
-    A single detected note with timing and pitch.
+    """A detected note or chord event with timing and pitch.
 
     All times are in seconds relative to the start of the recorded session.
-    """
-    onset_s: float          # note start time
-    offset_s: float         # note end time (next onset or last voiced frame)
-    midi_note: int          # nearest semitone (0–127)
-    frequency_hz: float     # median f0 across active frames
-    confidence: float       # mean voiced-probability across active frames
-    cents_deviation: float  # deviation from equal temperament (±50¢)
+    A monophonic detection emits singleton tuples (length 1). Chord
+    detections emit tuples of length 2+, with `midi_notes` sorted ascending
+    so chord identity is canonical.
 
-    # Future: list[int] for chord support
-    # Future: velocity (from onset strength or RMS)
+    Phase 0 of the polyphonic migration introduces the tuple fields and
+    keeps single-element back-compat properties for callers that have not
+    yet been migrated. The properties will be removed in Phase 2.
+
+    Parameters
+    ----------
+    onset_s : float
+        Note start time.
+    offset_s : float
+        Note end time (next onset or last voiced frame).
+    midi_notes : tuple[int, ...]
+        MIDI note numbers (0–127), sorted ascending. Empty tuple for rests
+        (rests are represented in QuantizedNote, not NoteEvent — NoteEvent
+        always has at least one pitch).
+    frequencies_hz : tuple[float, ...]
+        Median f0 across active frames, parallel to midi_notes.
+    confidences : tuple[float, ...]
+        Mean voiced-probability across active frames, parallel to midi_notes.
+    cents_deviations : tuple[float, ...]
+        Deviation from equal temperament (-50 to +50), parallel to midi_notes.
+    """
+    onset_s: float
+    offset_s: float
+    midi_notes: tuple[int, ...]
+    frequencies_hz: tuple[float, ...]
+    confidences: tuple[float, ...]
+    cents_deviations: tuple[float, ...]
 
     @property
     def duration_s(self) -> float:
         return max(0.0, self.offset_s - self.onset_s)
 
+    @property
+    def is_chord(self) -> bool:
+        return len(self.midi_notes) > 1
+
+    # ------------------------------------------------------------------
+    # Back-compat shims — removed in Phase 2
+    # ------------------------------------------------------------------
+
+    @property
+    def midi_note(self) -> int:
+        """Lowest MIDI note. Back-compat shim — prefer `midi_notes[0]`."""
+        return self.midi_notes[0]
+
+    @property
+    def frequency_hz(self) -> float:
+        """First-pitch frequency. Back-compat shim — prefer `frequencies_hz[0]`."""
+        return self.frequencies_hz[0]
+
+    @property
+    def confidence(self) -> float:
+        """Mean confidence across chord members. Back-compat shim."""
+        return sum(self.confidences) / len(self.confidences)
+
+    @property
+    def cents_deviation(self) -> float:
+        """First-pitch cents deviation. Back-compat shim."""
+        return self.cents_deviations[0]
+
     def __repr__(self) -> str:
+        if self.is_chord:
+            return (
+                f"NoteEvent(midi={list(self.midi_notes)}, "
+                f"onset={self.onset_s:.3f}s, "
+                f"dur={self.duration_s:.3f}s, "
+                f"conf={self.confidence:.2f})"
+            )
         return (
-            f"NoteEvent(midi={self.midi_note}, "
+            f"NoteEvent(midi={self.midi_notes[0]}, "
             f"onset={self.onset_s:.3f}s, "
             f"dur={self.duration_s:.3f}s, "
             f"conf={self.confidence:.2f})"
@@ -275,10 +330,10 @@ def _merge_consecutive_same_pitch(events: list[NoteEvent]) -> list[NoteEvent]:
             merged[-1] = NoteEvent(
                 onset_s=prev.onset_s,
                 offset_s=current.offset_s,
-                midi_note=prev.midi_note,
-                frequency_hz=(prev.frequency_hz + current.frequency_hz) / 2.0,
-                confidence=(prev.confidence + current.confidence) / 2.0,
-                cents_deviation=(prev.cents_deviation + current.cents_deviation) / 2.0,
+                midi_notes=(prev.midi_note,),
+                frequencies_hz=((prev.frequency_hz + current.frequency_hz) / 2.0,),
+                confidences=((prev.confidence + current.confidence) / 2.0,),
+                cents_deviations=((prev.cents_deviation + current.cents_deviation) / 2.0,),
             )
         else:
             merged.append(current)
@@ -389,10 +444,10 @@ class NoteTracker:
             events.append(NoteEvent(
                 onset_s=t_start + chunk_offset_s,
                 offset_s=t_end + chunk_offset_s,
-                midi_note=midi_note,
-                frequency_hz=median_freq,
-                confidence=mean_conf,
-                cents_deviation=cents_dev,
+                midi_notes=(midi_note,),
+                frequencies_hz=(median_freq,),
+                confidences=(mean_conf,),
+                cents_deviations=(cents_dev,),
             ))
 
         sorted_events = sorted(events, key=lambda e: e.onset_s)
