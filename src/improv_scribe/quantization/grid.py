@@ -75,19 +75,72 @@ def to_quarter_length(duration: NoteDuration) -> float:
 
 @dataclass
 class QuantizedNote:
-    """A NoteEvent after rhythm quantization."""
-    midi_note: int
-    frequency_hz: float
-    confidence: float
-    cents_deviation: float
+    """A NoteEvent after rhythm quantization, chord-capable.
 
-    onset_beat: float        # beat position (quarter note = 1)
-    duration_beats: float    # duration in beats
+    Phase 0 of the polyphonic migration introduces tuple-typed pitch fields
+    matching NoteEvent. Rests carry empty tuples for all pitch fields.
+    Back-compat properties wrap the first element so existing consumers
+    (notation, tab, MIDI export) continue to work without modification.
+    The properties will be removed in Phase 2.
 
+    Parameters
+    ----------
+    midi_notes : tuple[int, ...]
+        MIDI notes, sorted ascending. Empty tuple for rests.
+    frequencies_hz : tuple[float, ...]
+        Parallel to midi_notes. Empty for rests.
+    confidences : tuple[float, ...]
+        Parallel to midi_notes. Empty for rests.
+    cents_deviations : tuple[float, ...]
+        Parallel to midi_notes. Empty for rests.
+    onset_beat : float
+        Beat position (quarter note = 1).
+    duration_beats : float
+        Duration in beats.
+    duration_type : NoteDuration
+        Standard music notation duration name.
+    quarter_length : float
+        music21 quarterLength.
+    is_rest : bool
+        True for inserted rest entries.
+    """
+    midi_notes: tuple[int, ...]
+    frequencies_hz: tuple[float, ...]
+    confidences: tuple[float, ...]
+    cents_deviations: tuple[float, ...]
+
+    onset_beat: float
+    duration_beats: float
     duration_type: NoteDuration
-    quarter_length: float    # music21 quarterLength
+    quarter_length: float
 
-    is_rest: bool = False    # True for inserted rest notes
+    is_rest: bool = False
+
+    # ------------------------------------------------------------------
+    # Back-compat shims — removed in Phase 2
+    # ------------------------------------------------------------------
+
+    @property
+    def midi_note(self) -> int:
+        """Lowest MIDI note, or 0 for a rest. Back-compat shim."""
+        return self.midi_notes[0] if self.midi_notes else 0
+
+    @property
+    def frequency_hz(self) -> float:
+        """First-pitch frequency, or 0.0 for a rest. Back-compat shim."""
+        return self.frequencies_hz[0] if self.frequencies_hz else 0.0
+
+    @property
+    def confidence(self) -> float:
+        """Mean confidence across chord members, or 1.0 for a rest."""
+        if not self.confidences:
+            return 1.0
+        return sum(self.confidences) / len(self.confidences)
+
+    @property
+    def cents_deviation(self) -> float:
+        """First-pitch cents deviation, or 0.0 for a rest. Back-compat shim."""
+        return self.cents_deviations[0] if self.cents_deviations else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -176,10 +229,10 @@ class RhythmQuantizer:
                     quantized.append(rest)
 
             quantized.append(QuantizedNote(
-                midi_note=event.midi_note,
-                frequency_hz=event.frequency_hz,
-                confidence=event.confidence,
-                cents_deviation=event.cents_deviation,
+                midi_notes=event.midi_notes,
+                frequencies_hz=event.frequencies_hz,
+                confidences=event.confidences,
+                cents_deviations=event.cents_deviations,
                 onset_beat=snapped_onset,
                 duration_beats=dur_beats,
                 duration_type=dur_type,
@@ -224,10 +277,10 @@ class RhythmQuantizer:
         if _DURATION_FRACTIONS[dur_type] < self._min_dur_beats() / 4.0 - 1e-9:
             return None
         return QuantizedNote(
-            midi_note=0,
-            frequency_hz=0.0,
-            confidence=1.0,
-            cents_deviation=0.0,
+            midi_notes=(),
+            frequencies_hz=(),
+            confidences=(),
+            cents_deviations=(),
             onset_beat=start_beat,
             duration_beats=_DURATION_FRACTIONS[dur_type] * 4.0,
             duration_type=dur_type,
