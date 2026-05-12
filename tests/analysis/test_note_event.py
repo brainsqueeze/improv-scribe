@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from improv_scribe.analysis.note_tracker import NoteEvent
+from improv_scribe.analysis.note_tracker import NoteEvent, _merge_consecutive_same_pitch
 
 
 def _make(midi_notes: tuple[int, ...] = (60,), **overrides) -> NoteEvent:
@@ -76,3 +76,84 @@ class TestNoteEventBackCompatProperties:
     def test_cents_deviation_returns_first_element(self):
         event = _make(midi_notes=(60, 64), cents_deviations=(5.0, -3.0))
         assert event.cents_deviation == pytest.approx(5.0)
+
+
+class TestMergeConsecutiveSamePitch:
+    """The merge helper collapses back-to-back same-pitch events caused by
+    spurious re-onsets on sustained notes.
+
+    Phase 0 changes: comparison is now over full midi_notes tuples (chord
+    identity), parallel-tuple arithmetic for averaged fields, and a separate
+    gap threshold for chord events (200 ms) vs mono events (600 ms).
+    """
+
+    def test_merges_consecutive_singletons_close_in_time(self):
+        e1 = _make(onset_s=0.0, offset_s=0.5, midi_notes=(60,),
+                   frequencies_hz=(261.6,), confidences=(0.9,))
+        e2 = _make(onset_s=0.6, offset_s=1.0, midi_notes=(60,),
+                   frequencies_hz=(262.0,), confidences=(0.85,))
+        merged = _merge_consecutive_same_pitch([e1, e2])
+        assert len(merged) == 1
+        assert merged[0].onset_s == 0.0
+        assert merged[0].offset_s == 1.0
+        assert merged[0].midi_notes == (60,)
+        # Frequencies averaged element-wise
+        assert merged[0].frequencies_hz[0] == pytest.approx((261.6 + 262.0) / 2)
+        assert merged[0].confidences[0] == pytest.approx((0.9 + 0.85) / 2)
+
+    def test_does_not_merge_singletons_with_large_gap(self):
+        # Mono gap > 600 ms must NOT merge
+        e1 = _make(onset_s=0.0, offset_s=0.5, midi_notes=(60,))
+        e2 = _make(onset_s=1.5, offset_s=2.0, midi_notes=(60,))
+        merged = _merge_consecutive_same_pitch([e1, e2])
+        assert len(merged) == 2
+
+    def test_does_not_merge_different_singletons(self):
+        e1 = _make(onset_s=0.0, offset_s=0.5, midi_notes=(60,))
+        e2 = _make(onset_s=0.6, offset_s=1.0, midi_notes=(64,))
+        merged = _merge_consecutive_same_pitch([e1, e2])
+        assert len(merged) == 2
+
+    def test_merges_consecutive_chords_with_identical_pitches(self):
+        # Same chord, < 200 ms gap -> merge
+        e1 = _make(onset_s=0.0, offset_s=0.5, midi_notes=(60, 64, 67),
+                   frequencies_hz=(261.6, 329.6, 392.0),
+                   confidences=(0.9, 0.85, 0.8),
+                   cents_deviations=(0.0, 0.0, 0.0))
+        e2 = _make(onset_s=0.6, offset_s=1.0, midi_notes=(60, 64, 67),
+                   frequencies_hz=(262.0, 330.0, 392.5),
+                   confidences=(0.85, 0.8, 0.75),
+                   cents_deviations=(0.0, 0.0, 0.0))
+        merged = _merge_consecutive_same_pitch([e1, e2])
+        assert len(merged) == 1
+        assert merged[0].midi_notes == (60, 64, 67)
+        assert merged[0].frequencies_hz[0] == pytest.approx((261.6 + 262.0) / 2)
+        assert merged[0].frequencies_hz[1] == pytest.approx((329.6 + 330.0) / 2)
+        assert merged[0].frequencies_hz[2] == pytest.approx((392.0 + 392.5) / 2)
+
+    def test_does_not_merge_chords_with_different_pitches(self):
+        e1 = _make(onset_s=0.0, offset_s=0.5, midi_notes=(60, 64))
+        e2 = _make(onset_s=0.6, offset_s=1.0, midi_notes=(60, 67))   # one note differs
+        merged = _merge_consecutive_same_pitch([e1, e2])
+        assert len(merged) == 2
+
+    def test_does_not_merge_chord_to_singleton(self):
+        e1 = _make(onset_s=0.0, offset_s=0.5, midi_notes=(60, 64))
+        e2 = _make(onset_s=0.6, offset_s=1.0, midi_notes=(60,))
+        merged = _merge_consecutive_same_pitch([e1, e2])
+        assert len(merged) == 2
+
+    def test_chord_gap_threshold_is_tighter_than_mono(self):
+        # Chord gap of 300 ms (eighth notes at 100 BPM) must NOT merge
+        e1 = _make(onset_s=0.0, offset_s=0.5, midi_notes=(60, 64))
+        e2 = _make(onset_s=0.8, offset_s=1.3, midi_notes=(60, 64))   # gap = 300 ms
+        merged = _merge_consecutive_same_pitch([e1, e2])
+        assert len(merged) == 2
+
+    def test_empty_list_returns_empty(self):
+        assert _merge_consecutive_same_pitch([]) == []
+
+    def test_single_event_returns_single(self):
+        e = _make(midi_notes=(60,))
+        merged = _merge_consecutive_same_pitch([e])
+        assert merged == [e]
