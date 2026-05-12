@@ -8,7 +8,7 @@ Strategy
 2. Take the median f0 across those frames (robust to attack transient artefacts).
 3. Convert Hz → MIDI note number (round to nearest semitone).
 4. Emit a NoteEvent with onset_s, offset_s (= next onset or last voiced frame),
-   midi_note, and mean confidence.
+   midi_notes (singleton tuple in the monophonic case), and mean confidence.
 
 MIDI conversion
 ---------------
