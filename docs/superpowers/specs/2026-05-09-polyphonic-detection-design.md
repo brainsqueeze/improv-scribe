@@ -629,3 +629,43 @@ the design:
 | Chord-aware tab DP with no-string-conflict | (none — extension to existing DP, ~50 LOC) | New |
 | Tab MusicXML chord injection on staff 2 | (none — extension to existing tab_xml.py, ~20 LOC) | New |
 | `NoteEvent` chord migration | (data model evolution) | New |
+
+---
+
+## 10. Phase 0 Outcome (landed 2026-05-12)
+
+Phase 0 — data-model migration — completed in 9 commits on `chord-detection`
+branch (155f8d4 → 3b45f16). Net result:
+
+- `NoteEvent.midi_notes: tuple[int, ...]` and parallel tuple fields land
+  with read-only back-compat properties (`midi_note`, `frequency_hz`,
+  `confidence`, `cents_deviation`).
+- `QuantizedNote` mirrors the same shape; rests use empty tuples.
+- `_merge_consecutive_same_pitch` is chord-aware: tuple equality + parallel
+  averaging via `_avg_tuples` + 200 ms threshold for chord events.
+- Integration tests preserved at baseline: CREPE 72/72, pyin 69/72 (same 3
+  pre-existing failures unrelated to Phase 0).
+- 27 new unit tests cover the chord-capable contract (18 NoteEvent + 9
+  QuantizedNote).
+- Ruff: 11 pre-existing errors, no new ones introduced by Phase 0.
+
+### Phase 2 migration target list — `.midi_note` back-compat shim consumers
+
+Phase 2 removes the `midi_note` / `frequency_hz` / `confidence` / `cents_deviation`
+properties on `NoteEvent` and `QuantizedNote`. These six call-sites currently
+rely on the shim and must be migrated to read the tuple fields directly:
+
+| File | Line | Current code (via shim) | Migration target |
+|---|---:|---|---|
+| `src/improv_scribe/gui/main_window.py` | 288 | `_midi_name(n.midi_note)` | iterate `n.midi_notes` for chord display |
+| `src/improv_scribe/notation/tab_builder.py` | 77 | `get_candidates(note.midi_note, tuning)` | Phase 2 chord-shape DP rewrite uses `note.midi_notes` |
+| `src/improv_scribe/notation/score_builder.py` | 138 | `Note(qn.midi_note, …)` | Phase 2: `Chord(list(qn.midi_notes), …)` when `len > 1` |
+| `src/improv_scribe/notation/score_builder.py` | 192 | `Note(qn.midi_note)` | same — chord-aware in `build_raw()` |
+| `src/improv_scribe/export/midi_exporter.py` | 120 | `("note_on", event.midi_note)` | iterate `event.midi_notes` for chord note_on |
+| `src/improv_scribe/export/midi_exporter.py` | 121 | `("note_off", event.midi_note)` | iterate `event.midi_notes` for chord note_off |
+
+The midi_exporter changes (lines 120-121) are a **correctness bug** today
+under the back-compat shim — a chord event silently drops all but the
+lowest note in MIDI output. Phase 2 fixes this; Phase 0 deliberately
+defers it (no chord events exist until basic-pitch ships in Phase 1, so
+the bug is unreachable today).
