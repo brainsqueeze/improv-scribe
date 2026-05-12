@@ -669,3 +669,141 @@ under the back-compat shim — a chord event silently drops all but the
 lowest note in MIDI output. Phase 2 fixes this; Phase 0 deliberately
 defers it (no chord events exist until basic-pitch ships in Phase 1, so
 the bug is unreachable today).
+
+---
+
+## 11. Phase 1 Prerequisite — basic-pitch API Prototype (run 2026-05-12)
+
+Recorded findings from running `scripts/basic_pitch_probe.py` against
+`samples/guitar/6_string_electric_line_in.mp3`. These findings update §3.2
+and §7 before Phase 1 begins.
+
+### 11.1 Install path on Python 3.13
+
+basic-pitch 0.4.0's `pyproject.toml` declares `tensorflow-macos<2.15.1,>=2.4.1`
+as a base dependency gated on `platform_system == "Darwin" and python_version > "3.11"`.
+**No wheel for `tensorflow-macos` exists for Python 3.13.** Standard
+`pip install basic-pitch` and `pip install 'basic-pitch[onnx]'` both fail with
+`No matching distribution found for tensorflow-macos`.
+
+The `[onnx]` extra does NOT remove the TF base dep — it adds onnxruntime on
+top, which is unreachable when the base dep resolution fails.
+
+**Working install on Python 3.13 + macOS arm64:**
+
+```bash
+pip install --no-deps basic-pitch onnxruntime coremltools pretty-midi mir-eval resampy
+pip install mido importlib_resources
+```
+
+The ONNX model (`nmp.onnx`) ships with the basic-pitch wheel at
+`<site-packages>/basic_pitch/saved_models/icassp_2022/nmp.onnx` — no separate
+model download required.
+
+### 11.2 envionment.yaml additions
+
+Phase 1's environment update must enumerate the transitive deps explicitly
+(because we're using `--no-deps` for basic-pitch). The minimal set:
+
+- `basic-pitch>=0.4` (installed with `--no-deps`)
+- `onnxruntime` (the runtime; coremltools and tflite-runtime are NOT needed)
+- `pretty-midi>=0.2.9`
+- `mir-eval>=0.6`
+- `resampy>=0.2.2,<0.4.3`
+- `mido` (used by pretty-midi)
+- `importlib_resources` (used by pretty-midi's fluidsynth shim)
+
+`coremltools` is NOT required for the ONNX backend despite the misleading
+import-time warning ("Coremltools is not installed"). The warning is harmless
+when ONNX is present.
+
+### 11.3 Return shape (confirmed)
+
+```python
+result = predict(audio_path)
+# result is tuple[dict, pretty_midi.PrettyMIDI, list[tuple]]
+
+model_output, midi_data, note_events = result
+# model_output: dict with keys {'note', 'onset', 'contour'} — raw model logits
+# midi_data:    pretty_midi.PrettyMIDI object — already-assembled MIDI
+# note_events:  list[tuple[float, float, int, float, list[int]]]
+#               (start_s, end_s, midi, amplitude, pitch_bend)
+```
+
+The `pitch_bend` field is a list of int values (mostly 1s, occasional 0/2)
+representing 1/3-semitone offsets per frame. We will ignore it in Phase 1 —
+basic-pitch emits integer MIDI directly, and our `cents_deviations` field is
+zeroed for basic-pitch outputs anyway.
+
+### 11.4 numpy in-memory input — NOT SUPPORTED
+
+The spec §3.2 originally assumed `predict()` accepts a numpy array directly.
+**It does not.** `predict(numpy_array)` calls `str(audio_path)` internally
+and treats the result as a file path, producing `FileNotFoundError` with the
+array's repr as the "missing path."
+
+**Workaround for Phase 1:** the `_BasicPitchBackend.estimate()` wrapper writes
+the input audio to a temporary WAV file (via `soundfile.write`), calls
+`predict(temp_path)`, then deletes the temp file. The wrapper signature
+`estimate(audio: np.ndarray, …)` stays unchanged; only the internal plumbing
+shifts. Phase 4 polish: explore whether basic-pitch has a private "audio
+array" entry point that bypasses the path layer (we can check
+`basic_pitch.inference._run_inference` or similar).
+
+### 11.5 Cold-call latency (confirmed: very fast)
+
+Measured **0.32 s** for the cold-call (first import + first predict). The
+spec's concern about 1–3 s TF/TFLite cold-start does not apply because ONNX
+is much lighter. The model-load cache (module-level singleton) is still
+worth keeping for warm-call performance, but it's no longer a critical perf
+concern.
+
+### 11.6 Mono-content over-detection — critical Phase 1 calibration finding
+
+Running basic-pitch on `samples/guitar/6_string_electric_line_in.mp3` (6
+isolated open-string plucks: E2 A2 D3 G3 B3 E4) produced **18 note events**,
+not 6. Categorisation:
+
+- **Six correct fundamentals** are present (MIDI 40, 45, 50, 55, 59, 64),
+  with amplitudes 0.39–0.84.
+- **Duplicate detections** of E2 (MIDI 40) appear as 5 separate events —
+  basic-pitch fragments the sustained low note into multiple events.
+- **Spurious higher-octave detections** include MIDI 71 (B4), 76 (E5), 97
+  (E7), 62 (D4), 52 (E3) — these are harmonics/octave errors with
+  amplitudes 0.31–0.42.
+
+**Phase 1 implications:**
+
+1. The default `POLYPHONIC_AMPLITUDE_FLOOR = 0.10` is far too low — even the
+   spurious detections register at 0.31+. Recommend **default raised to
+   `0.40`** for the mono validation phase, and re-tuned empirically once we
+   have polyphonic samples.
+2. The merge helper (`_merge_consecutive_same_pitch`) will collapse the
+   5 duplicate E2 detections into one after Phase 1 wires basic-pitch into
+   the existing pipeline, but only if the inter-detection gap is below
+   `_MERGE_GAP_S = 600 ms`. The probe data shows E2 detections at 0.4s,
+   3.2s, 4.9s, 9.2s, 11.6s — gaps of 1.5–4.3 s, far above the threshold.
+   These will NOT be merged. Phase 1's mono validation test must therefore
+   either (a) accept many same-pitch events as the test outcome, (b) add a
+   "same-pitch deduplication" pass tuned for mono recordings, or (c) accept
+   that basic-pitch is just worse than CREPE on isolated mono content and
+   record per-backend ground truth in tests.
+3. The per-backend `EXPECTED_MIDI` strategy from §4.2 is **necessary, not
+   optional.** basic-pitch will produce more events than CREPE on the
+   existing mono samples; the integration tests have to accept the new count.
+
+### 11.7 Spec sections to update before Phase 1 implementation
+
+- §3.2 "basic-pitch's actual API" paragraph: replace "predict() takes either
+  a path or a numpy array" with "predict() takes a path only; the wrapper
+  writes a temp WAV file from numpy input."
+- §6 Configuration additions: `POLYPHONIC_AMPLITUDE_FLOOR` default raised
+  from 0.10 to 0.40 (calibration may revise this further).
+- §7 Dependency additions: list all 7 transitive deps explicitly; install
+  via `--no-deps` for basic-pitch.
+- §5 Risk register: downgrade "basic-pitch first-call latency" from Low to
+  Negligible; add a new risk "basic-pitch fragments sustained mono notes
+  into multiple events" with Medium likelihood and the §11.6 mitigation
+  options.
+- §2 Phase table — Phase 1 prerequisite is **DONE**; the install path,
+  return shape, and calibration finding are all locked in.
