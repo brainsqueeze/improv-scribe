@@ -709,13 +709,15 @@ Phase 1's environment update must enumerate the transitive deps explicitly
 - `onnxruntime` (the runtime; coremltools and tflite-runtime are NOT needed)
 - `pretty-midi>=0.2.9`
 - `mir-eval>=0.6`
-- `resampy>=0.2.2,<0.4.3`
 - `mido` (used by pretty-midi)
 - `importlib_resources` (used by pretty-midi's fluidsynth shim)
 
-`coremltools` is NOT required for the ONNX backend despite the misleading
-import-time warning ("Coremltools is not installed"). The warning is harmless
-when ONNX is present.
+`resampy` is **already in the env** as a torchcrepe transitive dep — do not
+remove it during any cleanup pass (lesson learned during the prototype:
+removing it broke the CREPE backend's import). `coremltools` is NOT required
+for the ONNX backend despite the misleading import-time warning
+("Coremltools is not installed"). The warning is harmless when ONNX is
+present.
 
 ### 11.3 Return shape (confirmed)
 
