@@ -74,3 +74,11 @@ class TestQuantizedNoteBackCompatProperties:
     def test_confidence_returns_one_for_rest(self):
         # Existing rest convention is confidence=1.0.
         assert _make_qn(is_rest=True).confidence == 1.0
+
+    def test_cents_deviation_returns_first_element(self):
+        qn = _make_qn(midi_notes=(60, 64), cents_deviations=(5.0, -3.0))
+        assert qn.cents_deviation == pytest.approx(5.0)
+
+    def test_cents_deviation_returns_zero_for_rest(self):
+        # Rest convention: cents_deviation=0.0.
+        assert _make_qn(is_rest=True).cents_deviation == 0.0

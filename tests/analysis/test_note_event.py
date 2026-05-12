@@ -157,3 +157,16 @@ class TestMergeConsecutiveSamePitch:
         e = _make(midi_notes=(60,))
         merged = _merge_consecutive_same_pitch([e])
         assert merged == [e]
+
+    def test_merges_chain_of_three_consecutive_singletons(self):
+        # Three identical-pitch events within the gap must collapse to one.
+        # Regression guard: the iterative merge must keep extending the
+        # running event, not just merge pairs.
+        e1 = _make(onset_s=0.0, offset_s=0.4, midi_notes=(60,))
+        e2 = _make(onset_s=0.5, offset_s=0.9, midi_notes=(60,))
+        e3 = _make(onset_s=1.0, offset_s=1.4, midi_notes=(60,))
+        merged = _merge_consecutive_same_pitch([e1, e2, e3])
+        assert len(merged) == 1
+        assert merged[0].onset_s == 0.0
+        assert merged[0].offset_s == 1.4
+        assert merged[0].midi_notes == (60,)

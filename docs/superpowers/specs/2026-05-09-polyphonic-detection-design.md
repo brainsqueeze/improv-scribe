@@ -645,9 +645,9 @@ branch (155f8d4 → 3b45f16). Net result:
   averaging via `_avg_tuples` + 200 ms threshold for chord events.
 - Integration tests preserved at baseline: CREPE 72/72, pyin 69/72 (same 3
   pre-existing failures unrelated to Phase 0).
-- 27 new unit tests cover the chord-capable contract (18 NoteEvent + 9
+- 30 new unit tests cover the chord-capable contract (19 NoteEvent + 11
   QuantizedNote).
-- Ruff: 11 pre-existing errors, no new ones introduced by Phase 0.
+- Ruff: pre-existing errors unchanged, no new ones introduced by Phase 0.
 
 ### Phase 2 migration target list — `.midi_note` back-compat shim consumers
 
