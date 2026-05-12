@@ -305,18 +305,38 @@ def _correct_octave_error(
 # Merge helper
 # ---------------------------------------------------------------------------
 
-# Maximum silence between two same-pitch events to treat as a single note.
+# Maximum silence between two same-pitch single-note events to treat as one note.
 # Spurious re-onsets caused by harmonic evolution appear within 600 ms;
-# intentional repeated notes at ≥80 BPM have gaps ≥375 ms but are typically
-# accompanied by a fresh attack, so we use a conservative 600 ms ceiling.
+# intentional repeated notes at >=80 BPM have gaps >=375 ms but are accompanied
+# by a fresh attack, so we use a conservative 600 ms ceiling.
 _MERGE_GAP_S: float = 0.600
+
+# Tighter threshold for chord events. Eighth-note strums at 100 BPM are 300 ms
+# apart and must NOT merge into one held chord.
+_MERGE_GAP_CHORD_S: float = 0.200
+
+
+def _avg_tuples(a: tuple[float, ...], b: tuple[float, ...]) -> tuple[float, ...]:
+    """Element-wise average of two parallel tuples.
+
+    Pre-condition: len(a) == len(b). Used by the merge helper after the
+    caller verifies tuple equality of midi_notes (which guarantees parallel
+    structure).
+    """
+    return tuple((x + y) / 2.0 for x, y in zip(a, b, strict=True))
 
 
 def _merge_consecutive_same_pitch(events: list[NoteEvent]) -> list[NoteEvent]:
-    """Merge back-to-back NoteEvents with identical pitch if the gap is small.
+    """Merge back-to-back NoteEvents whose midi_notes are identical.
 
-    Handles phantom re-onsets that appear when onset_detect fires on harmonic
+    Handles phantom re-onsets caused by onset_detect firing on harmonic
     evolution of a sustained note (e.g. the B3 string triggering twice).
+
+    The merge gap threshold differs by chord size:
+    - Singleton (mono) events: 600 ms — covers harmonic-evolution
+      false re-onsets on a decaying single note.
+    - Chord events: 200 ms — tighter, because eighth-note repeated chords
+      at 100 BPM are 300 ms apart and must NOT merge.
     """
     if not events:
         return events
@@ -325,15 +345,16 @@ def _merge_consecutive_same_pitch(events: list[NoteEvent]) -> list[NoteEvent]:
     for current in events[1:]:
         prev = merged[-1]
         gap = current.onset_s - prev.offset_s
-        if current.midi_note == prev.midi_note and gap <= _MERGE_GAP_S:
-            # Extend previous event to cover the full duration of both
+        same_pitches = current.midi_notes == prev.midi_notes
+        threshold = _MERGE_GAP_CHORD_S if prev.is_chord else _MERGE_GAP_S
+        if same_pitches and gap <= threshold:
             merged[-1] = NoteEvent(
                 onset_s=prev.onset_s,
                 offset_s=current.offset_s,
-                midi_notes=(prev.midi_note,),
-                frequencies_hz=((prev.frequency_hz + current.frequency_hz) / 2.0,),
-                confidences=((prev.confidence + current.confidence) / 2.0,),
-                cents_deviations=((prev.cents_deviation + current.cents_deviation) / 2.0,),
+                midi_notes=prev.midi_notes,
+                frequencies_hz=_avg_tuples(prev.frequencies_hz, current.frequencies_hz),
+                confidences=_avg_tuples(prev.confidences, current.confidences),
+                cents_deviations=_avg_tuples(prev.cents_deviations, current.cents_deviations),
             )
         else:
             merged.append(current)
