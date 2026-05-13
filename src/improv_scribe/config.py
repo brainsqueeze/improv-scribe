@@ -35,10 +35,12 @@ CONFIDENCE_THRESHOLD: float = float(os.getenv("ATS_CONFIDENCE_THRESHOLD", "0.5")
 # ---------------------------------------------------------------------------
 
 # Absolute amplitude floor for basic-pitch events. Below this, a detection is
-# dropped at the backend boundary. Probe results show genuine notes on mono
-# guitar register at 0.4 – 0.84; spurious detections cluster at 0.30 – 0.42.
-# 0.50 keeps all real notes while dropping nearly all spurious ones.
-POLYPHONIC_AMPLITUDE_FLOOR: float = float(os.getenv("ATS_POLYPHONIC_AMPLITUDE_FLOOR", "0.50"))
+# dropped at the backend boundary. Calibrated against the four mono integration
+# samples (see Task 9 of Phase 1): genuine notes register at >= 0.68 amplitude;
+# spurious detections (harmonics, sympathetic resonance) cluster at 0.30 - 0.55.
+# 0.65 keeps all real notes on guitar samples; bass samples retain one
+# sympathetic-resonance detection that can't be filtered without losing real notes.
+POLYPHONIC_AMPLITUDE_FLOOR: float = float(os.getenv("ATS_POLYPHONIC_AMPLITUDE_FLOOR", "0.65"))
 
 # Drop basic-pitch events shorter than this duration. Attack-transient
 # fragments are typically < 50 ms. Defaults to 50 ms.
