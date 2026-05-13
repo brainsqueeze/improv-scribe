@@ -45,11 +45,43 @@ class PitchFrame:
 
 
 @dataclass
+class BasicPitchNote:
+    """A single polyphonic note event from basic-pitch's predict() output.
+
+    Parameters
+    ----------
+    start_s : float
+        Onset time in seconds.
+    end_s : float
+        Offset time in seconds.
+    midi : int
+        Integer MIDI note number from basic-pitch (no microtonal deviation).
+    amplitude : float
+        basic-pitch's per-note mean frame activation, in [0, 1]. Used as a
+        confidence proxy for downstream filtering.
+    """
+    start_s: float
+    end_s: float
+    midi: int
+    amplitude: float
+
+    @property
+    def duration_s(self) -> float:
+        return max(0.0, self.end_s - self.start_s)
+
+
+@dataclass
 class PitchResult:
-    """Collection of PitchFrames for one analysis chunk."""
+    """Collection of pitch results for one analysis chunk.
+
+    pyin/crepe backends populate `frames` (per-hop f0 estimates).
+    basic-pitch backend populates `bp_notes` (already-assembled note events).
+    Consumers branch on whether `bp_notes is None`.
+    """
     frames: list[PitchFrame]
     sample_rate: int
     hop_length: int
+    bp_notes: list[BasicPitchNote] | None = None
 
     @property
     def voiced_frames(self) -> list[PitchFrame]:

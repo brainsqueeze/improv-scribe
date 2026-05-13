@@ -168,3 +168,42 @@ class TestPitchEstimatorPyin:
     def test_backend_name_property(self, config):
         estimator = PitchEstimator(config, backend="pyin")
         assert estimator.backend_name == "pyin"
+
+
+"""Unit tests for the basic-pitch pitch backend wrapper (Phase 1)."""
+
+
+class TestBasicPitchNote:
+    """The BasicPitchNote dataclass captures one event from basic-pitch.predict()."""
+
+    def test_construction(self):
+        from improv_scribe.analysis.pitch import BasicPitchNote
+        ev = BasicPitchNote(start_s=0.10, end_s=0.50, midi=60, amplitude=0.80)
+        assert ev.start_s == pytest.approx(0.10)
+        assert ev.end_s == pytest.approx(0.50)
+        assert ev.midi == 60
+        assert ev.amplitude == pytest.approx(0.80)
+
+    def test_duration_s_property(self):
+        from improv_scribe.analysis.pitch import BasicPitchNote
+        ev = BasicPitchNote(start_s=0.10, end_s=0.50, midi=60, amplitude=0.80)
+        assert ev.duration_s == pytest.approx(0.40)
+
+
+class TestPitchResultBpNotes:
+    """PitchResult gains an optional bp_notes field used by basic-pitch backend."""
+
+    def test_default_is_none(self):
+        result = PitchResult(frames=[], bp_notes=None, sample_rate=44100, hop_length=512)
+        assert result.bp_notes is None
+
+    def test_can_carry_bp_notes(self):
+        from improv_scribe.analysis.pitch import BasicPitchNote
+        notes = [
+            BasicPitchNote(start_s=0.0, end_s=0.5, midi=60, amplitude=0.8),
+            BasicPitchNote(start_s=0.5, end_s=1.0, midi=64, amplitude=0.7),
+        ]
+        result = PitchResult(frames=[], bp_notes=notes, sample_rate=44100, hop_length=512)
+        assert result.bp_notes is not None
+        assert len(result.bp_notes) == 2
+        assert result.bp_notes[0].midi == 60
