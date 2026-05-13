@@ -260,6 +260,91 @@ class _CrepeBackend(_PitchBackend):
 
 
 # ---------------------------------------------------------------------------
+# basic-pitch backend
+# ---------------------------------------------------------------------------
+
+class _BasicPitchBackend(_PitchBackend):
+    """
+    Wraps Spotify's `basic-pitch` polyphonic pitch detection model.
+
+    basic-pitch ships an ONNX model that handles arbitrary polyphony. The
+    wrapper writes the input audio to a temporary WAV file (basic-pitch's
+    `predict()` takes a path, not a numpy array — confirmed via prerequisite
+    probe), calls `predict()`, then filters the returned note events by:
+
+      1. InstrumentProfile MIDI range (drop e.g. high-octave hallucinations)
+      2. POLYPHONIC_AMPLITUDE_FLOOR (drop low-confidence detections)
+      3. MIN_NOTE_DURATION_S (drop attack-transient fragments)
+
+    The filtered events are returned as a `PitchResult` with `bp_notes`
+    populated and `frames=[]` (no per-frame data — the model emits assembled
+    notes directly).
+
+    Phase 1 emits singleton events. Phase 2 will add onset clustering for
+    chord detection.
+    """
+
+    def estimate(
+        self,
+        audio: np.ndarray,
+        sample_rate: int,
+        profile: InstrumentProfile,
+        config: AppConfig,
+    ) -> PitchResult:
+        try:
+            import soundfile as sf  # noqa: PLC0415
+            from basic_pitch.inference import predict  # noqa: PLC0415
+        except ImportError as exc:
+            raise ImportError(
+                "basic-pitch backend requires: bash scripts/install_basic_pitch.sh\n"
+                "Alternatively, set ATS_PITCH_BACKEND=crepe or pyin."
+            ) from exc
+
+        import tempfile  # noqa: PLC0415
+        from pathlib import Path  # noqa: PLC0415
+
+        # basic-pitch's predict() takes a path, not a numpy array — confirmed
+        # via prerequisite probe. Write to a temp WAV, call predict, clean up.
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            sf.write(tmp_path, audio, sample_rate)
+            _model_out, _midi_data, note_events = predict(str(tmp_path))
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+        # note_events: list[tuple[start_s, end_s, midi, amplitude, pitch_bend]]
+        # pitch_bend is ignored — we use integer MIDI directly.
+        bp_notes: list[BasicPitchNote] = []
+        for ev in note_events:
+            start_s, end_s, midi, amplitude, _pitch_bend = ev
+            midi_int = int(midi)
+            amp_float = float(amplitude)
+            duration = float(end_s) - float(start_s)
+
+            if amp_float < config.polyphonic_amplitude_floor:
+                continue
+            if not (profile.midi_min <= midi_int <= profile.midi_max):
+                continue
+            if duration < config.min_note_duration_s:
+                continue
+
+            bp_notes.append(BasicPitchNote(
+                start_s=float(start_s),
+                end_s=float(end_s),
+                midi=midi_int,
+                amplitude=amp_float,
+            ))
+
+        return PitchResult(
+            frames=[],
+            sample_rate=sample_rate,
+            hop_length=config.hop_length,
+            bp_notes=bp_notes,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Public estimator
 # ---------------------------------------------------------------------------
 
@@ -277,6 +362,7 @@ class PitchEstimator:
     _BACKENDS: dict[str, type[_PitchBackend]] = {
         "pyin": _PYinBackend,
         "crepe": _CrepeBackend,
+        "basic_pitch": _BasicPitchBackend,
     }
 
     def __init__(self, config: AppConfig, backend: str | None = None) -> None:
