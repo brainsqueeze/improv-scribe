@@ -31,6 +31,20 @@ HOP_LENGTH: int = int(os.getenv("ATS_HOP_LENGTH", "512"))
 CONFIDENCE_THRESHOLD: float = float(os.getenv("ATS_CONFIDENCE_THRESHOLD", "0.5"))
 
 # ---------------------------------------------------------------------------
+# Polyphonic detection (Phase 1+) — calibrated from prerequisite probe findings
+# ---------------------------------------------------------------------------
+
+# Absolute amplitude floor for basic-pitch events. Below this, a detection is
+# dropped at the backend boundary. Probe results show genuine notes on mono
+# guitar register at 0.4 – 0.84; spurious detections cluster at 0.30 – 0.42.
+# 0.50 keeps all real notes while dropping nearly all spurious ones.
+POLYPHONIC_AMPLITUDE_FLOOR: float = float(os.getenv("ATS_POLYPHONIC_AMPLITUDE_FLOOR", "0.50"))
+
+# Drop basic-pitch events shorter than this duration. Attack-transient
+# fragments are typically < 50 ms. Defaults to 50 ms.
+MIN_NOTE_DURATION_S: float = float(os.getenv("ATS_MIN_NOTE_DURATION_S", "0.050"))
+
+# ---------------------------------------------------------------------------
 # Noise gate
 # ---------------------------------------------------------------------------
 
@@ -83,6 +97,9 @@ class AppConfig:
     frame_length: int = field(default_factory=lambda: FRAME_LENGTH)
     hop_length: int = field(default_factory=lambda: HOP_LENGTH)
     confidence_threshold: float = field(default_factory=lambda: CONFIDENCE_THRESHOLD)
+
+    polyphonic_amplitude_floor: float = field(default_factory=lambda: POLYPHONIC_AMPLITUDE_FLOOR)
+    min_note_duration_s: float = field(default_factory=lambda: MIN_NOTE_DURATION_S)
 
     noise_gate_rms: float = field(default_factory=lambda: NOISE_GATE_RMS_THRESHOLD)
     noise_gate_hold_ms: float = field(default_factory=lambda: NOISE_GATE_HOLD_MS)
