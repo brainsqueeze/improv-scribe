@@ -140,6 +140,9 @@ conda activate auto-sheet-music
 
 # 4. Verify MuseScore is on PATH
 mscore --version
+
+# 5. Optional: install basic-pitch polyphonic backend (Phase 1+)
+bash scripts/install_basic_pitch.sh
 ```
 
 The environment name is **`auto-sheet-music`** (defined in `envionment.yaml`).  
