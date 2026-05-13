@@ -15,7 +15,7 @@ import pytest
 from improv_scribe.analysis.instrument_profiles import Instrument, get_profile
 from improv_scribe.analysis.note_tracker import NoteTracker, hz_to_midi
 from improv_scribe.analysis.onset import Onset
-from improv_scribe.analysis.pitch import PitchFrame, PitchResult
+from improv_scribe.analysis.pitch import BasicPitchNote, PitchFrame, PitchResult
 from improv_scribe.config import AppConfig
 
 
@@ -165,3 +165,90 @@ class TestNoteTracker:
         tracker = NoteTracker(config, guitar_profile)
         events = tracker.process(pitch_result, onsets)
         assert all(e.duration_s > 0 for e in events)
+
+
+# ---------------------------------------------------------------------------
+# Task 7 — basic-pitch dispatch path
+# ---------------------------------------------------------------------------
+
+def _bp_pitch_result(notes: list[BasicPitchNote]) -> PitchResult:
+    """Helper: build a PitchResult carrying basic-pitch notes."""
+    return PitchResult(
+        frames=[],
+        sample_rate=44100,
+        hop_length=512,
+        bp_notes=notes,
+    )
+
+
+class TestNoteTrackerBasicPitch:
+    """When `pitch_result.bp_notes is not None`, NoteTracker.process() takes
+    the basic-pitch path: one BasicPitchNote becomes one singleton NoteEvent.
+    No onset clustering in Phase 1 (Phase 2 adds it for chord support).
+    """
+
+    def _config(self):
+        return AppConfig()
+
+    def _profile(self):
+        return get_profile(Instrument.GUITAR)
+
+    def test_empty_bp_notes_returns_empty(self):
+        tracker = NoteTracker(self._config(), self._profile())
+        result = _bp_pitch_result([])
+        events = tracker.process(result, onsets=[])
+        assert events == []
+
+    def test_one_bp_note_becomes_one_singleton_event(self):
+        tracker = NoteTracker(self._config(), self._profile())
+        result = _bp_pitch_result([
+            BasicPitchNote(start_s=0.10, end_s=0.50, midi=60, amplitude=0.80),
+        ])
+        events = tracker.process(result, onsets=[])
+        assert len(events) == 1
+        e = events[0]
+        assert e.onset_s == pytest.approx(0.10)
+        assert e.offset_s == pytest.approx(0.50)
+        assert e.midi_notes == (60,)
+        assert e.confidences == (pytest.approx(0.80),)
+        assert e.cents_deviations == (0.0,)
+
+    def test_multiple_bp_notes_become_separate_singletons(self):
+        tracker = NoteTracker(self._config(), self._profile())
+        result = _bp_pitch_result([
+            BasicPitchNote(start_s=0.10, end_s=0.50, midi=60, amplitude=0.80),
+            BasicPitchNote(start_s=0.50, end_s=0.90, midi=64, amplitude=0.70),
+            BasicPitchNote(start_s=0.90, end_s=1.30, midi=67, amplitude=0.60),
+        ])
+        events = tracker.process(result, onsets=[])
+        assert len(events) == 3
+        assert [tuple(e.midi_notes) for e in events] == [(60,), (64,), (67,)]
+
+    def test_events_sorted_by_onset(self):
+        """basic-pitch can emit events out of time order — NoteTracker sorts."""
+        tracker = NoteTracker(self._config(), self._profile())
+        result = _bp_pitch_result([
+            BasicPitchNote(start_s=0.90, end_s=1.30, midi=67, amplitude=0.6),
+            BasicPitchNote(start_s=0.10, end_s=0.50, midi=60, amplitude=0.8),
+            BasicPitchNote(start_s=0.50, end_s=0.90, midi=64, amplitude=0.7),
+        ])
+        events = tracker.process(result, onsets=[])
+        assert [e.onset_s for e in events] == [0.10, 0.50, 0.90]
+
+    def test_chunk_offset_applied(self):
+        tracker = NoteTracker(self._config(), self._profile())
+        result = _bp_pitch_result([
+            BasicPitchNote(start_s=0.10, end_s=0.50, midi=60, amplitude=0.8),
+        ])
+        events = tracker.process(result, onsets=[], chunk_offset_s=5.0)
+        assert events[0].onset_s == pytest.approx(5.10)
+        assert events[0].offset_s == pytest.approx(5.50)
+
+    def test_dispatches_on_bp_notes_not_frames(self):
+        """If bp_notes is not None (even empty list), basic-pitch path is taken
+        regardless of whether onsets are passed in."""
+        tracker = NoteTracker(self._config(), self._profile())
+        result = _bp_pitch_result([])
+        # Onsets are non-empty but ignored on the basic-pitch path
+        events = tracker.process(result, onsets=[Onset(time_s=0.1, strength=1.0)])
+        assert events == []

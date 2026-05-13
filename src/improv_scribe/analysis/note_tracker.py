@@ -27,7 +27,7 @@ import numpy as np
 
 from improv_scribe.analysis.instrument_profiles import InstrumentProfile
 from improv_scribe.analysis.onset import Onset
-from improv_scribe.analysis.pitch import PitchResult
+from improv_scribe.analysis.pitch import BasicPitchNote, PitchResult
 from improv_scribe.config import AppConfig
 
 # ---------------------------------------------------------------------------
@@ -393,8 +393,12 @@ class NoteTracker:
         chunk_offset_s: float = 0.0,
         audio: np.ndarray | None = None,
     ) -> list[NoteEvent]:
-        """
-        Produce NoteEvents from a chunk's pitch + onset data.
+        """Produce NoteEvents from a chunk's pitch + onset data.
+
+        Dispatches on whether the PitchResult carries basic-pitch's pre-assembled
+        note events (`bp_notes`) or frame-level f0 data (`frames`). Phase 1
+        basic-pitch path emits one singleton NoteEvent per BasicPitchNote — chord
+        clustering will be added in Phase 2.
 
         Parameters
         ----------
@@ -409,7 +413,38 @@ class NoteTracker:
 
         Returns
         -------
-        list[NoteEvent]  — sorted by onset_s
+        list[NoteEvent]
+            Sorted by onset_s.
+        """
+        if pitch_result.bp_notes is not None:
+            return self._process_basic_pitch(pitch_result.bp_notes, chunk_offset_s)
+        return self._process_frame_based(pitch_result, onsets, chunk_offset_s, audio)
+
+    def _process_frame_based(
+        self,
+        pitch_result: PitchResult,
+        onsets: list[Onset],
+        chunk_offset_s: float = 0.0,
+        audio: np.ndarray | None = None,
+    ) -> list[NoteEvent]:
+        """Assemble NoteEvents from onset times + per-frame f0 data (pYIN/CREPE path).
+
+        This is the original monophonic pipeline logic, preserved verbatim from
+        before the basic-pitch dispatch was introduced.
+
+        Parameters
+        ----------
+        pitch_result : PitchResult
+        onsets : list[Onset]
+        chunk_offset_s : float
+            Add this to all times so they are session-absolute, not chunk-relative.
+        audio : np.ndarray | None
+            Raw audio samples for the spectral octave-error fallback.
+
+        Returns
+        -------
+        list[NoteEvent]
+            Sorted by onset_s.
         """
         if not onsets:
             return []
@@ -469,6 +504,49 @@ class NoteTracker:
                 frequencies_hz=(median_freq,),
                 confidences=(mean_conf,),
                 cents_deviations=(cents_dev,),
+            ))
+
+        sorted_events = sorted(events, key=lambda e: e.onset_s)
+        return _merge_consecutive_same_pitch(sorted_events)
+
+    def _process_basic_pitch(
+        self,
+        bp_notes: list[BasicPitchNote],
+        chunk_offset_s: float,
+    ) -> list[NoteEvent]:
+        """Convert basic-pitch's pre-assembled notes into singleton NoteEvents.
+
+        Phase 1: one BasicPitchNote => one singleton NoteEvent. No onset
+        clustering. No octave-error correction (basic-pitch already does its
+        own polyphonic spectral analysis; layering the existing
+        _correct_octave_error over its output is risky — see spec §3.2).
+
+        Output is sorted by onset_s ascending. Same-pitch deduplication uses
+        the existing _merge_consecutive_same_pitch helper, which on singleton
+        chord-equality is behaviourally identical to pre-Phase-0 mono semantics.
+
+        Parameters
+        ----------
+        bp_notes : list[BasicPitchNote]
+            Pre-assembled note events from basic-pitch's predict() output.
+        chunk_offset_s : float
+            Add this to all times so they are session-absolute, not chunk-relative.
+
+        Returns
+        -------
+        list[NoteEvent]
+            Sorted by onset_s.
+        """
+        events: list[NoteEvent] = []
+        for bp in bp_notes:
+            events.append(NoteEvent(
+                onset_s=bp.start_s + chunk_offset_s,
+                offset_s=bp.end_s + chunk_offset_s,
+                midi_notes=(bp.midi,),
+                # MIDI -> 440-tuned frequency: 440 * 2**((midi - 69)/12)
+                frequencies_hz=(440.0 * 2.0 ** ((bp.midi - 69) / 12.0),),
+                confidences=(bp.amplitude,),
+                cents_deviations=(0.0,),
             ))
 
         sorted_events = sorted(events, key=lambda e: e.onset_s)
