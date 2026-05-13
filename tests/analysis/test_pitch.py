@@ -234,11 +234,15 @@ class TestBasicPitchBackend:
     def test_unpacks_note_events_into_bp_notes(self):
         from improv_scribe.analysis.pitch import _BasicPitchBackend  # noqa: PLC0415
 
-        # 3 events: 2 within range + amplitude, 1 below amplitude floor
+        config = self._make_config()
+        # Two events comfortably above floor; one comfortably below.
+        # Use config.polyphonic_amplitude_floor so the test tracks the
+        # calibrated value rather than a hardcoded literal.
+        floor = config.polyphonic_amplitude_floor
         fake_events = [
-            (0.10, 0.50, 60, 0.80, [1, 1, 1]),   # OK
-            (0.50, 0.90, 64, 0.70, [1, 1, 1]),   # OK
-            (0.90, 1.30, 67, 0.30, [1, 1, 1]),   # below floor (0.50)
+            (0.10, 0.50, 60, floor + 0.15, [1, 1, 1]),   # OK
+            (0.50, 0.90, 64, floor + 0.05, [1, 1, 1]),   # OK
+            (0.90, 1.30, 67, floor - 0.20, [1, 1, 1]),   # below floor
         ]
         audio = np.zeros(44100, dtype=np.float32)
 
@@ -248,14 +252,14 @@ class TestBasicPitchBackend:
                 audio=audio,
                 sample_rate=44100,
                 profile=self._make_profile(),
-                config=self._make_config(),
+                config=config,
             )
 
         assert result.bp_notes is not None
         assert len(result.bp_notes) == 2   # third event filtered out
         assert {n.midi for n in result.bp_notes} == {60, 64}
         for n in result.bp_notes:
-            assert n.amplitude >= 0.50
+            assert n.amplitude >= floor
 
     def test_filters_out_of_range_notes(self):
         from improv_scribe.analysis.pitch import _BasicPitchBackend  # noqa: PLC0415

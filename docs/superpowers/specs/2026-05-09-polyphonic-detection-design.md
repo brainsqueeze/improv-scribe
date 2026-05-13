@@ -117,27 +117,26 @@ class PitchResult:
     hop_length: int
 ```
 
-**basic-pitch's actual API.** `basic_pitch.inference.predict()` returns a
-3-tuple `(model_output_dict, midi_data, note_events)` where `note_events` is
+**basic-pitch's actual API** (confirmed by the Phase 1 prerequisite probe —
+see §11). `basic_pitch.inference.predict()` returns a 3-tuple
+`(model_output_dict, midi_data, note_events)` where `note_events` is
 `list[tuple[float, float, int, float, list[int] | None]]` —
 `(start_s, end_s, midi, amplitude, pitch_bends)` positionally. We unpack
 positionally and ignore `pitch_bends` (we already encode microtonal deviation
 in `cents_deviations`, but we set those to 0.0 for basic-pitch outputs since
 they emit integer MIDI directly). The model is loaded lazily on first
-`predict()` call (~1–3 s, mostly TF/TFLite import + ONNX weight load). We
-keep a module-level cache of the loaded model so subsequent chunks re-use it.
+`predict()` call (~0.32 s measured cold-call on Apple Silicon — ONNX runtime
+only, no TF/TFLite). We keep a module-level cache of the loaded model so
+subsequent chunks re-use it.
 
-**Phase 1 prerequisite — prototype the import + first call** before locking
-the wrapper interface. The prototype confirms (a) the exact tuple shape the
-installed version returns, (b) whether `predict()` accepts a numpy array
-in-memory or only a file path (we expect the former), and (c) the actual
-TF/TFLite cold-start cost. If the prototype reveals a different API shape,
-this section gets a small revision before implementation continues.
-
-`_BasicPitchBackend.estimate()` calls `predict()` on the in-memory audio
-array, unpacks `note_events`, filters by `InstrumentProfile.midi_min/midi_max`
-and an absolute amplitude floor (`POLYPHONIC_AMPLITUDE_FLOOR = 0.10`),
-and returns a `PitchResult` with `bp_notes` populated.
+**`predict()` requires a file path; numpy arrays are not accepted.**
+`_BasicPitchBackend.estimate()` therefore writes the input audio buffer to a
+temporary WAV file (via `soundfile.write`), calls `predict(str(tmp_path))`,
+then deletes the temp file in a `finally` block (exception-safe). The wrapper
+unpacks `note_events`, filters by `InstrumentProfile.midi_min/midi_max`,
+`POLYPHONIC_AMPLITUDE_FLOOR` (final calibrated value **0.65** — see §6 and
+§12), and `MIN_NOTE_DURATION_S` (50 ms), and returns a `PitchResult` with
+`bp_notes` populated and `frames=[]`.
 
 `PITCH_BACKENDS = {"pyin", "crepe", "basic_pitch"}`. Default flips at the end
 of Phase 2.
@@ -555,7 +554,7 @@ Both must pass before crossing a phase boundary.
 | basic-pitch produces spurious very short notes on attack transients | Medium | Filter at backend boundary: drop `BasicPitchNote` with `(end_s - start_s) < MIN_NOTE_DURATION_S` (default 50 ms). |
 | **`midi_exporter.py` silently drops chord members via the `midi_note` back-compat shim** | High (correctness bug if not addressed) | Promoted from Phase 4 polish to Phase 2 deliverable. Exporter must iterate `midi_notes` and emit one note_on/note_off per chord member. The Phase 0 grep check expanded to cover `event.midi_note` in `midi_exporter.py` and `gui/main_window.py`. |
 | **Tempo IOI fallback under chord-dense input** — chord events drop event count by ≤4× per chord, making `_ioi_median` (≤ 4 events) more likely to fire with 0.3 confidence | Medium | The ±15% BPM tolerance on polyphonic tests covers the IOI-fallback case. If real recordings show degradation, revisit by weighting onsets by chord size in the synthetic envelope. |
-| **basic-pitch first-call latency** — TF/TFLite import + ONNX weight load is 1–3 s on first `predict()` | Low | Cache the loaded model at module level; cold start is amortised over a session. Acceptable since the pipeline is batch (post-hoc), not real-time. |
+| **basic-pitch first-call latency** — measured 0.32 s on Apple Silicon (ONNX runtime, no TF) | Negligible (downgraded after probe) | Module-level model cache keeps subsequent chunks at warm-call latency. Original 1–3 s concern was based on TF/TFLite assumptions that don't apply to the ONNX-only install path. |
 
 ---
 
@@ -565,27 +564,47 @@ New entries in [config.py](../../../src/improv_scribe/config.py):
 
 ```python
 # Polyphonic detection (Phase 1+)
-ONSET_GROUPING_WINDOW_MS: float = float(os.getenv("ATS_ONSET_GROUPING_WINDOW_MS", "100.0"))
-POLYPHONIC_AMPLITUDE_FLOOR: float = float(os.getenv("ATS_POLYPHONIC_AMPLITUDE_FLOOR", "0.10"))
-POLYPHONIC_RELATIVE_FLOOR: float = float(os.getenv("ATS_POLYPHONIC_RELATIVE_FLOOR", "0.5"))
-MIN_NOTE_DURATION_S: float = float(os.getenv("ATS_MIN_NOTE_DURATION_S", "0.050"))
-MERGE_GAP_CHORD_MS: float = float(os.getenv("ATS_MERGE_GAP_CHORD_MS", "200.0"))
-DEBUG_CLUSTERING: bool = os.getenv("ATS_DEBUG_CLUSTERING", "0") == "1"
+# Phase 1 (LANDED): POLYPHONIC_AMPLITUDE_FLOOR and MIN_NOTE_DURATION_S
+ONSET_GROUPING_WINDOW_MS: float = float(os.getenv("ATS_ONSET_GROUPING_WINDOW_MS", "100.0"))   # Phase 2
+POLYPHONIC_AMPLITUDE_FLOOR: float = float(os.getenv("ATS_POLYPHONIC_AMPLITUDE_FLOOR", "0.65")) # calibrated Phase 1
+POLYPHONIC_RELATIVE_FLOOR: float = float(os.getenv("ATS_POLYPHONIC_RELATIVE_FLOOR", "0.5"))    # Phase 2
+MIN_NOTE_DURATION_S: float = float(os.getenv("ATS_MIN_NOTE_DURATION_S", "0.050"))             # Phase 1
+MERGE_GAP_CHORD_MS: float = float(os.getenv("ATS_MERGE_GAP_CHORD_MS", "200.0"))               # Phase 2
+DEBUG_CLUSTERING: bool = os.getenv("ATS_DEBUG_CLUSTERING", "0") == "1"                         # Phase 2
 ```
 
 These propagate into `AppConfig` with the same field-default pattern used
-today.
+today. `POLYPHONIC_AMPLITUDE_FLOOR` was initially proposed at 0.10 then
+revised to 0.40 then to 0.65 — see §11.6 and §12 for the empirical
+calibration trail.
 
 ---
 
 ## 7. Dependency additions
 
-`envionment.yaml` gains:
+**Phase 1 actually-shipped install path** (supersedes the simpler bullet
+that originally appeared here — see §11.1 and §11.2 for why):
 
-- `basic-pitch>=0.4` (Spotify's polyphonic transcription model)
+`pyproject.toml` gains a `basic-pitch` optional-dependency extra with the
+six transitives that resolve normally on Python 3.13:
 
-basic-pitch's own dependencies (pretty-midi, librosa, mir_eval, etc.) are
-all already in our environment or are transitively pulled. No system-level
+- `onnxruntime>=1.17`
+- `pretty-midi>=0.2.9`
+- `mir-eval>=0.6`
+- `mido>=1.3`
+- `importlib_resources>=5.0`
+- `soundfile>=0.12` (needed for the temp-WAV path described in §3.2)
+
+`envionment.yaml` mirrors these in its `pip:` section.
+
+`basic-pitch` itself is **NOT** in the extra because pip's resolver tries
+to pull `tensorflow-macos<2.15.1` for Python >3.11, and no such wheel exists.
+The installer script `scripts/install_basic_pitch.sh` runs the install in
+two passes: first `pip install -e ".[basic-pitch]"` for the transitives,
+then `pip install --no-deps 'basic-pitch>=0.4'` for the package itself.
+
+`resampy` is already in the env as a `torchcrepe` transitive — do not
+remove it during any cleanup pass (it would break CREPE). No system-level
 additions (no Homebrew formula).
 
 ---
