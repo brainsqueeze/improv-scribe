@@ -27,10 +27,10 @@ def _make_event(onset_s: float, offset_s: float, midi: int = 60) -> NoteEvent:
     return NoteEvent(
         onset_s=onset_s,
         offset_s=offset_s,
-        midi_note=midi,
-        frequency_hz=261.63,
-        confidence=0.9,
-        cents_deviation=0.0,
+        midi_notes=(midi,),
+        frequencies_hz=(261.63,),
+        confidences=(0.9,),
+        cents_deviations=(0.0,),
     )
 
 
