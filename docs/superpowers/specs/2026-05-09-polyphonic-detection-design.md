@@ -882,3 +882,97 @@ tuple-kwarg shape.
 **Lesson recorded:** future phase gates should run BOTH the integration
 suite AND the unit-test suite. Phase 2's phase-gate command updated
 accordingly.
+
+---
+
+## 13. Phase 2 Prerequisite — Real Dyad Recording Probe (run 2026-05-22)
+
+User-provided real dyad recordings landed in `samples/guitar/chords/` —
+three files on a USB-in electric guitar:
+
+- `6_string_electric_octave_dyads.mp3` (six octave dyads)
+- `6_string_electric_perfect_fifths.mp3` (six perfect 5ths)
+- `6_string_electric_major_thirds.mp3` (six major 3rds, mixed string pairs:
+  4 on the 5-4 pair, 2 on the 4-3 pair)
+
+Ran `_BasicPitchBackend` on each (with the Phase 1 calibrated config:
+`POLYPHONIC_AMPLITUDE_FLOOR=0.65`, no clustering yet) and inspected the
+raw note_events output.
+
+### 13.1 Cluster window validated at 100ms
+
+Onset spreads within detected dyads ranged from **0 ms to 35 ms** across
+all 18 dyads detected. The Phase 2 default `ONSET_GROUPING_WINDOW_MS=100`
+has comfortable headroom over the largest observed spread. **No revision
+needed.**
+
+### 13.2 Dyad detection rate: 3–4 of 6 per file
+
+basic-pitch at floor=0.65 detects:
+
+| Sample | Dyads | Singletons (one member lost) | Hit rate |
+|---|---|---|---|
+| octave_dyads | 3 | 3 (lost lower octave on G/A/C) | 50% |
+| perfect_fifths | 3 | 3 (lost the 5th on D5/D3/B2) | 50% |
+| major_thirds | 4 | 2 (lost the 3rd on E3/G3) | 67% |
+
+The lost members register below 0.65 amplitude — picking-dynamics variation
+on a real performance. The 6-onset cluster structure is intact in every
+file; what we're losing is pitch *coverage* within some clusters, not the
+clusters themselves.
+
+### 13.3 Phase 2 ground-truth decision: accept actual detection
+
+User decision (recorded 2026-05-22): Phase 2 integration tests assert
+**what basic-pitch actually detects** (mixed dyads + singletons), not the
+ideal 6-of-6 dyads. Rationale: this is production-realistic. Phase 4 may
+revisit the absolute floor and/or add cluster-internal relative
+filtering, but only with evidence from real-world chord performances.
+
+### 13.4 Implications for Phase 2 plan
+
+- The cluster window default of 100 ms is empirically confirmed; no
+  Phase 2 plan task needed to re-tune.
+- The cluster algorithm itself (earliest-anchor + 100 ms window) is
+  validated against real strums.
+- Integration test ground truth for the three new samples records the
+  actual basic-pitch output (mixed dyads/singletons) — Phase 2's Tier 3
+  test file lists each cluster's expected `midi_notes` tuple explicitly.
+- The `POLYPHONIC_RELATIVE_FLOOR` config field (defaulted 0.5 in §6) is
+  still introduced in Phase 2 for forward-compat, but its effect on the
+  current samples is small — most surviving dyad members are within 25%
+  of their cluster's max amplitude, so a 50% relative floor doesn't
+  drop them.
+- Phase 4 / quality-improvement scope (not Phase 2): explore lowering
+  absolute floor + per-cluster relative filtering for higher dyad-recall
+  rate. Out of scope for this MVP.
+
+### 13.5 Exact basic-pitch output (for Phase 2 ground truth)
+
+The Phase 2 plan's integration tests will assert these exact MIDI tuples
+per cluster, captured by `scripts/basic_pitch_probe.py` on the real
+recordings:
+
+**octave_dyads** (6 clusters):
+1. `(40, 52)` at 0.290s — E2+E3
+2. `(41, 53)` at 2.079s — F2+F3
+3. `(55,)` at 3.821s — G3 only
+4. `(45,)` at 5.541s — A2 only
+5. `(47, 59)` at 7.307s — B2+B3
+6. `(48,)` at 9.014s — C3 only
+
+**perfect_fifths** (6 clusters):
+1. `(47,)` at 0.453s — B2 only
+2. `(41, 48)` at 1.998s — F2+C3
+3. `(50,)` at 3.484s — D3 only
+4. `(45, 52)` at 4.983s — A2+E3
+5. `(47,)` at 6.355s — B2 only
+6. `(48, 55)` at 7.771s — C3+G3
+
+**major_thirds** (6 clusters):
+1. `(50, 54)` at 0.302s — D3+F#3 (5-4 pair)
+2. `(52,)` at 1.091s — E3 only
+3. `(54, 58)` at 1.927s — F#3+A#3 (5-4 pair)
+4. `(55,)` at 2.834s — G3 only
+5. `(57, 61)` at 3.670s — A3+C#4 (4-3 pair)
+6. `(59, 63)` at 4.530s — B3+D#4 (4-3 pair)
