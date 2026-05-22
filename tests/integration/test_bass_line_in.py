@@ -29,34 +29,43 @@ SAMPLE_PATH = SAMPLE_ROOT / "bass" / "4_string_bass_line_in.mp3"
 INSTRUMENT = Instrument.BASS
 EXPECTED_DURATION_S = 12.3
 
-# basic-pitch produces 5 events: the four open strings plus one sympathetic
-# E1 detection at 6.749s (amp 0.738) that can't be filtered without losing
-# legitimate notes.
+# basic-pitch produces 5 raw events: the four open strings plus one sympathetic
+# E1 detection at 6.749s (amp 0.738). In Phase 2, onset clustering groups the
+# G3 onset (6.668s, amp 0.774) with the sympathetic E1 (6.749s, 81ms gap) into
+# one chord event [28, 43], reducing the total event count to 4.
 NOTE_COUNT_BY_BACKEND: dict[str, int] = {
     "crepe":       4,
     "pyin":        4,
-    "basic_pitch": 5,
+    "basic_pitch": 4,
 }
 NOTE_COUNT = NOTE_COUNT_BY_BACKEND[_BACKEND]
 
 # Concert (sounding) MIDI, low string → high string: E1 A1 D2 G2
-# basic-pitch adds a 5th sympathetic E1 detection.
+# basic-pitch Phase 2: sympathetic E1 (6.749s) clusters with G3 (6.668s) into
+# chord [28, 43]. midi_note returns the lowest pitch (28 = E1).
 EXPECTED_MIDI_BY_BACKEND: dict[str, list[int]] = {
     "crepe":       [28, 33, 38, 43],
     "pyin":        [28, 33, 38, 43],
-    "basic_pitch": [28, 33, 38, 43, 28],   # 5th event is sympathetic E1 detection (amp 0.74)
+    "basic_pitch": [28, 33, 38, 28],   # 4th event is chord [28,43]; midi_note → lowest = 28
 }
 EXPECTED_MIDI = EXPECTED_MIDI_BY_BACKEND[_BACKEND]
 
 # Notes are written at concert pitch (bass8vb clef carries the octave offset).
-EXPECTED_WRITTEN_MIDI = list(EXPECTED_MIDI)
+# basic-pitch Phase 2: chord [28,43] is serialised via midi_note (lowest pitch),
+# so the score sees MIDI 28 for the last event — same as the first E1 event.
+EXPECTED_WRITTEN_MIDI_BY_BACKEND: dict[str, list[int]] = {
+    "crepe":       [28, 33, 38, 43],
+    "pyin":        [28, 33, 38, 43],
+    "basic_pitch": [28, 28, 33, 38],  # chord [28,43] -> midi_note=28; no 43 in score
+}
+EXPECTED_WRITTEN_MIDI = EXPECTED_WRITTEN_MIDI_BY_BACKEND[_BACKEND]
 
 # Tab: every open string → (string_idx, fret=0), 0-based from lowest string
-# basic-pitch: 5th note (E1, MIDI 28) maps to string_idx=0, fret=0.
+# basic-pitch Phase 2: last event is chord [28,43]; lowest pitch used for tab.
 EXPECTED_TAB_BY_BACKEND: dict[str, list[tuple[int, int]]] = {
     "crepe":       [(0, 0), (1, 0), (2, 0), (3, 0)],
     "pyin":        [(0, 0), (1, 0), (2, 0), (3, 0)],
-    "basic_pitch": [(0, 0), (1, 0), (2, 0), (3, 0), (0, 0)],
+    "basic_pitch": [(0, 0), (1, 0), (2, 0), (0, 0)],  # chord's lowest pitch E1 -> string 0
 }
 EXPECTED_TAB = EXPECTED_TAB_BY_BACKEND[_BACKEND]
 

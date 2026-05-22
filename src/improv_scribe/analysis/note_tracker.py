@@ -326,6 +326,76 @@ def _avg_tuples(a: tuple[float, ...], b: tuple[float, ...]) -> tuple[float, ...]
     return tuple((x + y) / 2.0 for x, y in zip(a, b, strict=True))
 
 
+def _cluster_basic_pitch_notes(
+    bp_notes: list[BasicPitchNote],
+    window_s: float,
+    relative_floor: float,
+) -> list[list[BasicPitchNote]]:
+    """Group basic-pitch events into chord clusters by onset proximity.
+
+    Algorithm:
+    1. Sort events by start_s ascending.
+    2. Walk through; open a new cluster when the current event's start_s
+       exceeds the EARLIEST member of the current cluster by more than
+       window_s. Anchoring on the earliest member (rather than the most
+       recent) caps total cluster width.
+    3. Within each cluster, deduplicate by MIDI value (keep highest amp).
+    4. Apply relative amplitude floor: drop members whose amplitude is
+       below relative_floor * max(amps in cluster).
+    5. Sort cluster members by MIDI ascending so the resulting tuple is
+       canonical.
+
+    Parameters
+    ----------
+    bp_notes : list[BasicPitchNote]
+    window_s : float
+        Cluster window in seconds (typically 0.100).
+    relative_floor : float
+        Drop members below this fraction of the cluster's max amplitude.
+
+    Returns
+    -------
+    list[list[BasicPitchNote]]
+        One inner list per cluster, members sorted by MIDI ascending.
+        Clusters appear in onset order. Empty clusters (all members
+        dropped) are omitted.
+    """
+    if not bp_notes:
+        return []
+
+    sorted_notes = sorted(bp_notes, key=lambda n: n.start_s)
+
+    raw_clusters: list[list[BasicPitchNote]] = []
+    for note in sorted_notes:
+        if not raw_clusters or (note.start_s - raw_clusters[-1][0].start_s) > window_s:
+            raw_clusters.append([note])
+        else:
+            raw_clusters[-1].append(note)
+
+    cleaned_clusters: list[list[BasicPitchNote]] = []
+    for cluster in raw_clusters:
+        # Deduplicate by MIDI value, keeping highest amplitude
+        by_midi: dict[int, BasicPitchNote] = {}
+        for n in cluster:
+            existing = by_midi.get(n.midi)
+            if existing is None or n.amplitude > existing.amplitude:
+                by_midi[n.midi] = n
+        deduped = list(by_midi.values())
+
+        # Apply relative amplitude floor within the cluster
+        max_amp = max(n.amplitude for n in deduped)
+        threshold = max_amp * relative_floor
+        survivors = [n for n in deduped if n.amplitude >= threshold]
+
+        if not survivors:
+            continue
+        # Sort by MIDI ascending so tuples are canonical
+        survivors.sort(key=lambda n: n.midi)
+        cleaned_clusters.append(survivors)
+
+    return cleaned_clusters
+
+
 def _merge_consecutive_same_pitch(events: list[NoteEvent]) -> list[NoteEvent]:
     """Merge back-to-back NoteEvents whose midi_notes are identical.
 
@@ -514,16 +584,19 @@ class NoteTracker:
         bp_notes: list[BasicPitchNote],
         chunk_offset_s: float,
     ) -> list[NoteEvent]:
-        """Convert basic-pitch's pre-assembled notes into singleton NoteEvents.
+        """Convert basic-pitch's pre-assembled notes into NoteEvents, clustering
+        simultaneous detections into chord events.
 
-        Phase 1: one BasicPitchNote => one singleton NoteEvent. No onset
-        clustering. No octave-error correction (basic-pitch already does its
-        own polyphonic spectral analysis; layering the existing
-        _correct_octave_error over its output is risky — see spec §3.2).
+        Phase 2: clusters of size 1 emit singleton NoteEvents (backward-compatible
+        with Phase 1); clusters of size 2+ emit chord NoteEvents with the full
+        midi_notes tuple sorted ascending.
 
-        Output is sorted by onset_s ascending. Same-pitch deduplication uses
-        the existing _merge_consecutive_same_pitch helper, which on singleton
-        chord-equality is behaviourally identical to pre-Phase-0 mono semantics.
+        Clustering rule (see _cluster_basic_pitch_notes): earliest-anchor + window.
+        Cluster width is capped by ONSET_GROUPING_WINDOW_MS (100 ms default).
+        Members below POLYPHONIC_RELATIVE_FLOOR * max(amps in cluster) are dropped.
+
+        No octave-error correction is applied — basic-pitch already does its own
+        polyphonic spectral analysis (spec §3.2).
 
         Parameters
         ----------
@@ -537,16 +610,31 @@ class NoteTracker:
         list[NoteEvent]
             Sorted by onset_s.
         """
+        if not bp_notes:
+            return []
+
+        window_s = self._config.onset_grouping_window_ms / 1000.0
+        clusters = _cluster_basic_pitch_notes(
+            bp_notes,
+            window_s=window_s,
+            relative_floor=self._config.polyphonic_relative_floor,
+        )
+
         events: list[NoteEvent] = []
-        for bp in bp_notes:
+        for cluster in clusters:
+            onset = min(n.start_s for n in cluster) + chunk_offset_s
+            offset = max(n.end_s for n in cluster) + chunk_offset_s
+            midi_notes = tuple(n.midi for n in cluster)
+            frequencies = tuple(440.0 * 2.0 ** ((n.midi - 69) / 12.0) for n in cluster)
+            confidences = tuple(n.amplitude for n in cluster)
+            cents = tuple(0.0 for _ in cluster)
             events.append(NoteEvent(
-                onset_s=bp.start_s + chunk_offset_s,
-                offset_s=bp.end_s + chunk_offset_s,
-                midi_notes=(bp.midi,),
-                # MIDI -> 440-tuned frequency: 440 * 2**((midi - 69)/12)
-                frequencies_hz=(440.0 * 2.0 ** ((bp.midi - 69) / 12.0),),
-                confidences=(bp.amplitude,),
-                cents_deviations=(0.0,),
+                onset_s=onset,
+                offset_s=offset,
+                midi_notes=midi_notes,
+                frequencies_hz=frequencies,
+                confidences=confidences,
+                cents_deviations=cents,
             ))
 
         sorted_events = sorted(events, key=lambda e: e.onset_s)
