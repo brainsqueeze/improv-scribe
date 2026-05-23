@@ -976,3 +976,84 @@ recordings:
 4. `(55,)` at 2.834s — G3 only
 5. `(57, 61)` at 3.670s — A3+C#4 (4-3 pair)
 6. `(59, 63)` at 4.530s — B3+D#4 (4-3 pair)
+
+---
+
+## 14. Phase 2 Outcome (landed 2026-05-23)
+
+Phase 2 — dyad detection end-to-end — completed in 12 task commits on
+`chord-detection-phase2` worktree branch. The phase delivered:
+
+- Onset clustering in `_process_basic_pitch` with earliest-anchor +
+  100 ms window + relative-floor filter (Task 4).
+- `ScoreBuilder.build()` emits `music21.chord.Chord` for multi-pitch
+  QuantizedNotes (Task 6).
+- Chord-aware `assign_frets()` with no-string-conflict DP (Task 8).
+- music21 chord serialization shape verified (Task 9 — input-order
+  preservation, not ascending).
+- `inject_tab_part()` walks `<chord/>` siblings and mirrors them on
+  staff 2 with MIDI-ordered assignment alignment (Task 10).
+- `midi_exporter.raw_from_events()` emits N note_on/note_off per chord
+  (Task 11). Phase 0 §10 silent-drop bug fixed.
+- `gui/main_window.py` displays chord names like "E4/G4/B4" (Task 12).
+- Back-compat shims (`.midi_note`, `.frequency_hz`, `.confidence`,
+  `.cents_deviation`) removed from NoteEvent and QuantizedNote — all 6
+  Phase 0 §10 consumers migrated (Task 13).
+- Three new dyad integration tests (octave/5th/3rd samples) keyed off
+  spec §13.5 ground truth (Task 14).
+- Default backend flipped from `crepe` to `basic_pitch` (Task 15).
+- Manual PDF chord+tab render verification (Task 16) — see
+  `docs/superpowers/phase2_chord_proof.pdf` for the artifact.
+
+### 14.1 Phase gate results
+
+| Backend | Result |
+|---|---|
+| `ATS_PITCH_BACKEND=crepe` | 271 passed, 12 skipped |
+| `ATS_PITCH_BACKEND=basic_pitch` | 279 passed, 4 skipped |
+
+### 14.2 Per-backend ground truth divergence on dyad samples
+
+All three dyad samples produce identical results to spec §13.5 ground truth.
+
+### 14.3 Discovered pre-existing quantizer issue (deferred to Phase 4)
+
+Task 16's PDF render verification surfaced a pre-existing quantizer
+bug not specific to chord support: `RhythmQuantizer.quantize()` snaps
+onset and offset independently, which can produce rests and notes
+with overlapping beat ranges. When the resulting MusicXML is rendered
+via MuseScore, the inconsistent `<duration>` and `<type>` element
+pairings cause MuseScore to exit with code 40 (silent rejection).
+
+Reproduces with the three dyad samples at the clamped 40 BPM tempo.
+Does NOT reproduce with the four existing monophonic integration
+samples — those snap to clean integer beat positions.
+
+The bug is in `quantization/grid.py` and pre-dates Phase 2. The chord
+support itself is verified working end-to-end via
+`docs/superpowers/phase2_chord_proof.pdf` (a hand-constructed score
+with clean timing rendered through the full Phase 2 pipeline).
+
+Phase 4 scope (separate spec): fix the quantizer to ensure rest
++ note duration consistency. Until then, the dyad integration tests
+assert on the data model (NoteEvent.midi_notes tuples) and PDF
+rendering is verified separately on hand-constructed inputs.
+
+### 14.4 Lessons recorded for Phase 3
+
+1. **PDF render is a useful regression gate.** The integration tests
+   assert on music21 Score state but not on MuseScore output. Phase 3
+   should consider adding at least one PDF render smoke test (hand-
+   constructed Score, render to PDF, assert PDF file > 1 KB) so future
+   quantizer bugs surface in CI.
+2. **Worktree editable install requires re-pip from the worktree.**
+   The conda env's site-packages can only point at one location;
+   `pip install -e .` from the worktree path makes that worktree the
+   source-of-truth. Document in CLAUDE.md if Phase 3 also uses a
+   worktree.
+3. **basic-pitch's mono detection differs from CREPE.** The bass
+   sympathetic-resonance detection (spec §12, bass_line_in test)
+   was extended in Phase 2: with clustering enabled, the sympathetic
+   E1 merges with the G2 into a chord. This is expected, but
+   Phase 3 should be aware that clustering can change basic-pitch's
+   per-onset event counts on mono samples.

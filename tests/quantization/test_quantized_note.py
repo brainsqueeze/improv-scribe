@@ -48,37 +48,3 @@ class TestQuantizedNoteShape:
         assert qn.frequencies_hz == ()
         assert qn.confidences == ()
         assert qn.cents_deviations == ()
-
-
-class TestQuantizedNoteBackCompatProperties:
-    """Removed in Phase 2."""
-
-    def test_midi_note_returns_first_element(self):
-        assert _make_qn(midi_notes=(60,)).midi_note == 60
-        assert _make_qn(midi_notes=(60, 64, 67)).midi_note == 60
-
-    def test_midi_note_returns_zero_for_rest(self):
-        # Existing rest convention is midi_note=0.
-        assert _make_qn(is_rest=True).midi_note == 0
-
-    def test_frequency_hz_returns_first_element(self):
-        assert _make_qn(midi_notes=(60,), frequencies_hz=(261.6,)).frequency_hz == pytest.approx(261.6)
-
-    def test_frequency_hz_returns_zero_for_rest(self):
-        assert _make_qn(is_rest=True).frequency_hz == 0.0
-
-    def test_confidence_returns_mean(self):
-        qn = _make_qn(midi_notes=(60, 64), confidences=(0.8, 0.6))
-        assert qn.confidence == pytest.approx(0.7)
-
-    def test_confidence_returns_one_for_rest(self):
-        # Existing rest convention is confidence=1.0.
-        assert _make_qn(is_rest=True).confidence == 1.0
-
-    def test_cents_deviation_returns_first_element(self):
-        qn = _make_qn(midi_notes=(60, 64), cents_deviations=(5.0, -3.0))
-        assert qn.cents_deviation == pytest.approx(5.0)
-
-    def test_cents_deviation_returns_zero_for_rest(self):
-        # Rest convention: cents_deviation=0.0.
-        assert _make_qn(is_rest=True).cents_deviation == 0.0

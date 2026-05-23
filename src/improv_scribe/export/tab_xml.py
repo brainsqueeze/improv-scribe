@@ -29,10 +29,26 @@ MusicXML structure produced:
       </note>
     </measure>
   </part>
+
+Chord support (Phase 2)
+-----------------------
+A MusicXML chord is represented as a group of consecutive ``<note>`` elements where
+the first has no ``<chord/>`` child and subsequent members have ``<chord/>`` as their
+first child.  inject_tab_part groups these into *slots* so that one assignment tuple
+of length N is consumed per N-note chord (or 1 for a monophonic note/rest).
+
+MIDI-ordering invariant
+-----------------------
+music21 emits chord pitches in MIDI-ascending order (Task 9 finding).  assign_frets
+returns shapes sorted by string ascending.  For natural voicings these orderings
+match, but they can diverge for non-standard voicings.  _order_assignment_by_midi
+sorts the assignment tuple by implied MIDI (tuning[string_idx] + fret) before it is
+zipped onto the XML notes, guaranteeing correct mapping regardless of voicing.
 """
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
@@ -65,6 +81,16 @@ _STAFF_TUNING: dict[Instrument, list[tuple[str, int]]] = {
     Instrument.BASS: BASS_STAFF_TUNING,
 }
 
+# MIDI pitch of each open string, ordered low-to-high (index == string_idx).
+# These must mirror the values in notation/tab_builder.py so that the implied
+# MIDI computation (tuning[string_idx] + fret) round-trips correctly.
+_MIDI_TUNING: dict[Instrument, list[int]] = {
+    Instrument.GUITAR: [40, 45, 50, 55, 59, 64],  # E2 A2 D3 G3 B3 E4
+    Instrument.BASS:   [28, 33, 38, 43],           # E1 A1 D2 G2
+}
+
+_DEFAULT_MIDI_TUNING: list[int] = [40, 45, 50, 55, 59, 64]
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -73,16 +99,20 @@ _STAFF_TUNING: dict[Instrument, list[tuple[str, int]]] = {
 def inject_tab_part(
     mxl_path: Path,
     notes: list[QuantizedNote],
-    assignments: list[tuple[int, int] | None],
+    assignments: list[tuple[tuple[int, int], ...] | None],
     profile: InstrumentProfile,
 ) -> None:
-    """
-    Modify *mxl_path* in-place to add a linked TAB staff to the existing notation staff.
+    """Modify *mxl_path* in-place to add a linked TAB staff to the existing notation staff.
 
     The existing P1 part is modified to contain two staves:
-    staff 1 (notation) and staff 2 (TAB). Each non-rest note gains a ``<staff>1</staff>``
-    element plus ``<technical><string>/<fret>`` annotations, and a staff-2 copy is
-    inserted immediately after.
+    staff 1 (notation) and staff 2 (TAB).  Each non-rest note gains a
+    ``<staff>1</staff>`` element plus ``<technical><string>/<fret>`` annotations,
+    and a staff-2 copy is inserted immediately after.
+
+    Chord support: a QuantizedNote whose ``midi_notes`` has length N produces N
+    consecutive ``<note>`` elements in the MusicXML file (first without ``<chord/>``,
+    siblings 2–N with ``<chord/>``).  All N elements share one assignment tuple of
+    length N emitted by ``assign_frets()``.
 
     Parameters
     ----------
@@ -90,9 +120,10 @@ def inject_tab_part(
         Path to an existing MusicXML file (will be overwritten).
     notes : list[QuantizedNote]
         The same note list used to build the score (in order).
-    assignments : list[tuple[int, int] | None]
+    assignments : list[tuple[tuple[int, int], ...] | None]
         Fret assignments from tab_builder.assign_frets(). Parallel to notes.
-        Each entry is (string_idx, fret) or None for rests.
+        Each non-rest entry is a tuple of (string_idx, fret) pairs — one per
+        chord member, sorted by string ascending.  None for rests.
     profile : InstrumentProfile
         Used for string count and tuning info.
     """
@@ -111,40 +142,57 @@ def inject_tab_part(
         raise ValueError("MusicXML file has no <part> element.")
 
     tuning_data = _STAFF_TUNING.get(profile.instrument, GUITAR_STAFF_TUNING)
+    midi_tuning = _MIDI_TUNING.get(profile.instrument, _DEFAULT_MIDI_TUNING)
     n_strings = len(tuning_data)
 
     # -----------------------------------------------------------------------
-    # Build note_assignment_map: id(note_el) → (string_idx, fret)
-    # Only non-rest XML notes are matched; music21-inserted rests are skipped.
-    # Tied continuation notes (tie type="stop") do not consume a new assignment;
-    # they reuse the assignment from the note they continue so that the TAB staff
-    # shows the same fret for the duration of the tie.
+    # Build slot_assignment_map: id(first_note_in_slot) → assignment tuple.
+    #
+    # Walk measures grouping <note> elements into chord-slots, then consume
+    # one assignment entry per slot.  Rests produce None-assignment slots;
+    # tie continuations re-use the previous non-rest assignment so the TAB
+    # staff shows the same fret for the full tied duration.
     # -----------------------------------------------------------------------
-    pitched_assignments = [a for a in assignments if a is not None]
-    pitched_iter = iter(pitched_assignments)
+    non_rest_assignments: list[tuple[tuple[int, int], ...]] = [
+        a for a in assignments if a is not None
+    ]
+    assignment_iter = iter(non_rest_assignments)
 
-    def _is_rest_element(note_el: ET.Element) -> bool:
-        return note_el.find(tag("rest")) is not None
+    # Map from id(any_note_el_in_slot) → MIDI-ordered assignment tuple.
+    # Chord siblings all map to the same tuple; the annotation step uses the
+    # sibling's index within the slot to pick the right (string, fret) pair.
+    note_assignment_map: dict[int, tuple[tuple[int, int], ...]] = {}
+    current_assignment: tuple[tuple[int, int], ...] | None = None
 
-    def _is_tie_continuation(note_el: ET.Element) -> bool:
-        return any(t.get("type") == "stop" for t in note_el.findall(tag("tie")))
-
-    note_assignment_map: dict[int, tuple[int, int]] = {}
-    current_assignment: tuple[int, int] | None = None
     for measure_el in p1.findall(tag("measure")):
-        for note_el in measure_el.findall(tag("note")):
-            if _is_rest_element(note_el):
-                pass  # rests never appear mid-tie; don't reset current_assignment
-            elif _is_tie_continuation(note_el):
+        slots = _group_notes_into_slots(measure_el, tag)
+        for slot in slots:
+            first_note = slot[0]
+            is_rest = first_note.find(tag("rest")) is not None
+            if is_rest:
+                # Rests never appear mid-tie; don't reset current_assignment.
+                continue
+            is_tie_continuation = any(
+                t.get("type") == "stop"
+                for t in first_note.findall(tag("tie"))
+            )
+            if is_tie_continuation:
                 if current_assignment is not None:
-                    note_assignment_map[id(note_el)] = current_assignment
+                    midi_ordered = _order_assignment_by_midi(
+                        current_assignment, midi_tuning
+                    )
+                    for note_el in slot:
+                        note_assignment_map[id(note_el)] = midi_ordered
             else:
-                current_assignment = next(pitched_iter, None)
-                if current_assignment is not None:
-                    note_assignment_map[id(note_el)] = current_assignment
+                raw = next(assignment_iter, None)
+                if raw is not None:
+                    current_assignment = raw
+                    midi_ordered = _order_assignment_by_midi(raw, midi_tuning)
+                    for note_el in slot:
+                        note_assignment_map[id(note_el)] = midi_ordered
 
     # -----------------------------------------------------------------------
-    # Process the first measure: inject <staves>, tab clef, staff-details
+    # Process the first measure: inject <staves>, tab clef, staff-details.
     # -----------------------------------------------------------------------
     first_measure = p1.find(tag("measure"))
     if first_measure is None:
@@ -158,10 +206,12 @@ def inject_tab_part(
     _inject_two_staves_attributes(attrs_el, tuning_data, tag)
 
     # -----------------------------------------------------------------------
-    # For every measure: annotate staff-1 notes and insert staff-2 copies
+    # For every measure: annotate staff-1 notes and insert staff-2 copies.
     # -----------------------------------------------------------------------
     for measure_el in p1.findall(tag("measure")):
-        _annotate_measure(measure_el, note_assignment_map, n_strings, tag)
+        _annotate_measure(
+            measure_el, note_assignment_map, n_strings, tag, midi_tuning
+        )
 
     tree.write(str(mxl_path), encoding="unicode", xml_declaration=True)
 
@@ -169,6 +219,76 @@ def inject_tab_part(
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
+
+def _group_notes_into_slots(
+    measure_el: ET.Element,
+    tag: Callable[[str], str],
+) -> list[list[ET.Element]]:
+    """Group consecutive ``<note>`` children of *measure_el* into chord-slots.
+
+    A slot begins at a ``<note>`` without a ``<chord/>`` child and includes any
+    immediately following ``<note>`` elements whose first child is ``<chord/>``.
+    Non-``<note>`` children (``<backup>``, ``<attributes>``, etc.) are ignored.
+
+    Parameters
+    ----------
+    measure_el : ET.Element
+        A MusicXML ``<measure>`` element.
+    tag : Callable[[str], str]
+        Namespace-aware tag builder.
+
+    Returns
+    -------
+    list[list[ET.Element]]
+        Each inner list is one slot (1 element for a monophonic note/rest,
+        N elements for an N-member chord).
+    """
+    slots: list[list[ET.Element]] = []
+    current: list[ET.Element] = []
+    for child in list(measure_el):
+        if child.tag != tag("note"):
+            continue
+        # A chord-sibling has <chord/> as its first *element* child.
+        first_child = next((c for c in child if c.tag == tag("chord")), None)
+        is_chord_sibling = first_child is not None
+        if is_chord_sibling and current:
+            current.append(child)
+        else:
+            if current:
+                slots.append(current)
+            current = [child]
+    if current:
+        slots.append(current)
+    return slots
+
+
+def _order_assignment_by_midi(
+    assignment: tuple[tuple[int, int], ...],
+    tuning: list[int],
+) -> tuple[tuple[int, int], ...]:
+    """Reorder a (string, fret) assignment tuple to MIDI-ascending order.
+
+    music21 emits chord pitches in input order (MIDI-ascending, since
+    ``qn.midi_notes`` is sorted ascending).  assign_frets returns shapes sorted
+    by string ascending.  For natural voicings these orderings align; for unusual
+    voicings (e.g. low MIDI pitch on a high string number) they can diverge.
+    This function sorts by implied MIDI (``tuning[string_idx] + fret``) so the
+    resulting tuple zips correctly onto the XML ``<note>`` sequence.
+
+    Parameters
+    ----------
+    assignment : tuple[tuple[int, int], ...]
+        (string_idx, fret) pairs, arbitrarily ordered.
+    tuning : list[int]
+        MIDI pitch of each open string (index == string_idx), low to high.
+
+    Returns
+    -------
+    tuple[tuple[int, int], ...]
+        Same pairs sorted by implied MIDI ascending.
+    """
+    return tuple(sorted(assignment, key=lambda sf: tuning[sf[0]] + sf[1]))
+
 
 def _inject_two_staves_attributes(
     attrs_el: ET.Element,
@@ -221,58 +341,94 @@ def _inject_two_staves_attributes(
 
 def _annotate_measure(
     measure_el: ET.Element,
-    note_assignment_map: dict[int, tuple[int, int]],
+    note_assignment_map: dict[int, tuple[tuple[int, int], ...]],
     n_strings: int,
     tag: Callable[[str], str],
+    midi_tuning: list[int],
 ) -> None:
-    """
+    """Annotate staff-1 notes and append staff-2 mirror copies for one measure.
+
     For each note in *measure_el*:
-    - Add ``<staff>1</staff>`` and fret/string technical annotation (non-rest notes only)
-    - Append a staff-2 copy after a ``<backup>`` element that resets the cursor
+
+    - Add ``<staff>1</staff>`` and fret/string technical annotation
+      (non-rest notes that have an assignment only).
+    - Deep-copy each slot's notes with ``<staff>2</staff>`` and the same
+      technical annotation, then append them after a ``<backup>`` element.
+
+    Chord slots: the N staff-2 copies for an N-note chord are emitted with
+    ``<chord/>`` on members 2..N so the MusicXML cursor is not advanced more
+    than once per slot.  The assignment entries (one pair per chord member) are
+    zipped onto the XML notes in the order they appear in
+    *note_assignment_map* (already MIDI-ascending from the pre-processing step).
 
     MusicXML cursor semantics: each ``<note>`` without ``<chord/>`` advances the
     cursor by its duration.  Staff-2 notes must be preceded by a ``<backup>`` that
     resets the cursor to the beginning of the measure; otherwise they appear at
     beat positions past the barline and are not rendered.
+
+    Parameters
+    ----------
+    measure_el : ET.Element
+        A MusicXML ``<measure>`` element (modified in-place).
+    note_assignment_map : dict[int, tuple[tuple[int, int], ...]]
+        Maps ``id(note_el)`` to the MIDI-ordered assignment tuple for that note.
+        Chord siblings all map to the same tuple — each sibling's own pair is
+        looked up by its position within the slot (XML note index matches
+        assignment index because both are MIDI-ascending).
+    n_strings : int
+        Total number of strings for this instrument (used to convert string_idx
+        to MusicXML 1-based string number from the top).
+    tag : Callable[[str], str]
+        Namespace-aware tag builder.
+    midi_tuning : list[int]
+        MIDI pitch of each open string (index == string_idx).
     """
-    original_notes = list(measure_el.findall(tag("note")))
+    slots = _group_notes_into_slots(measure_el, tag)
     staff2_notes: list[ET.Element] = []
     total_duration = 0
 
-    for note_el in original_notes:
-        is_rest = note_el.find(tag("rest")) is not None
-        assignment = note_assignment_map.get(id(note_el))
+    for slot in slots:
+        is_rest = slot[0].find(tag("rest")) is not None
+        # Get the full assignment tuple for this slot (same for all siblings).
+        slot_assignment = note_assignment_map.get(id(slot[0]))
 
-        # Add <staff>1</staff> to the original note
-        staff1_el = ET.SubElement(note_el, tag("staff"))
-        staff1_el.text = "1"
+        for note_el in slot:
+            # Add <staff>1</staff> to every original note.
+            staff1_el = ET.SubElement(note_el, tag("staff"))
+            staff1_el.text = "1"
 
-        # Add technical annotation to staff-1 note (non-rest with assignment)
-        if not is_rest and assignment is not None:
-            string_idx, fret = assignment
-            string_num = n_strings - string_idx
-            _add_technical_annotation(note_el, string_num, fret, tag)
+        # Annotate staff-1 notes with technical if there's an assignment.
+        if not is_rest and slot_assignment is not None:
+            for idx, note_el in enumerate(slot):
+                if idx < len(slot_assignment):
+                    string_idx, fret = slot_assignment[idx]
+                    string_num = n_strings - string_idx
+                    _add_technical_annotation(note_el, string_num, fret, tag)
 
-        # Accumulate measure duration from notes that advance the cursor.
-        # Notes with <chord/> play simultaneously with the preceding note and
-        # do not advance the cursor — skip them.
-        if note_el.find(tag("chord")) is None:
-            dur_el = note_el.find(tag("duration"))
+        # Accumulate measure duration from the first note of this slot only
+        # (chord siblings share the same beat position and do not advance the
+        # cursor in MusicXML).
+        first_note = slot[0]
+        if first_note.find(tag("chord")) is None:
+            dur_el = first_note.find(tag("duration"))
             if dur_el is not None:
-                try:
+                with contextlib.suppress(ValueError):
                     total_duration += int(dur_el.text or "0")
-                except ValueError:
-                    pass
 
-        # Build staff-2 copy
-        staff2_note = copy.deepcopy(note_el)
-        staff_el = staff2_note.find(tag("staff"))
-        if staff_el is not None:
-            staff_el.text = "2"
-        else:
-            s = ET.SubElement(staff2_note, tag("staff"))
-            s.text = "2"
-        staff2_notes.append(staff2_note)
+        # Build staff-2 copies for this slot.
+        for note_el in slot:
+            staff2_note = copy.deepcopy(note_el)
+            # Update (or add) <staff>2</staff>.
+            staff_el = staff2_note.find(tag("staff"))
+            if staff_el is not None:
+                staff_el.text = "2"
+            else:
+                s = ET.SubElement(staff2_note, tag("staff"))
+                s.text = "2"
+            # Chord siblings 2..N must retain <chord/>; the first must not have
+            # one so it anchors the beat position.  Deep-copy preserves whatever
+            # <chord/> state the original had, which is already correct.
+            staff2_notes.append(staff2_note)
 
     if not staff2_notes or total_duration == 0:
         return
@@ -294,7 +450,20 @@ def _add_technical_annotation(
     fret: int,
     tag: Callable[[str], str],
 ) -> None:
-    """Inject ``<notations><technical><string>/<fret>`` into *note_el*."""
+    """Inject ``<notations><technical><string>/<fret>`` into *note_el*.
+
+    Parameters
+    ----------
+    note_el : ET.Element
+        A MusicXML ``<note>`` element (modified in-place).
+    string_num : int
+        1-based string number counting from the highest (thinnest) string,
+        as required by MusicXML (e.g. string 1 = high E on guitar).
+    fret : int
+        Fret number (0 = open).
+    tag : Callable[[str], str]
+        Namespace-aware tag builder.
+    """
     notations = note_el.find(tag("notations"))
     if notations is None:
         notations = ET.SubElement(note_el, tag("notations"))

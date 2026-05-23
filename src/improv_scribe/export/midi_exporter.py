@@ -114,11 +114,13 @@ class MIDIExporter:
         note_track = mido.MidiTrack()
         mid.tracks.append(note_track)
 
-        # Build flat list of (time_s, msg_type, note) and sort by time
+        # Build flat list of (time_s, msg_type, note) and sort by time.
+        # Chord events: one note_on/note_off per chord member at the same tick.
         messages: list[tuple[float, str, int]] = []
         for event in events:
-            messages.append((event.onset_s, "note_on", event.midi_note))
-            messages.append((event.offset_s, "note_off", event.midi_note))
+            for midi in event.midi_notes:
+                messages.append((event.onset_s, "note_on", midi))
+                messages.append((event.offset_s, "note_off", midi))
         messages.sort(key=lambda m: (m[0], 0 if m[1] == "note_on" else 1))
 
         def s_to_ticks(t: float) -> int:
