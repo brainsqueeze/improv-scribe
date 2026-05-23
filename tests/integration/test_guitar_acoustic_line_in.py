@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import os
 
-import numpy as np
 import music21.clef
 import music21.note
+import numpy as np
 
 from improv_scribe.analysis.instrument_profiles import Instrument, get_profile
 from tests.integration.conftest import SAMPLE_ROOT, make_pipeline_fixtures
@@ -42,8 +42,9 @@ EXPECTED_MIDI = EXPECTED_MIDI_BY_BACKEND[_BACKEND]
 # Notes are written at concert pitch (treble8vb clef carries the octave offset).
 EXPECTED_WRITTEN_MIDI = list(EXPECTED_MIDI)
 
-# Tab: every open string → (string_idx, fret=0), 0-based from lowest string
-EXPECTED_TAB = [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0)]
+# Tab: every open string → ((string_idx, fret=0),), 0-based from lowest string
+# Phase 2: each assignment is a tuple of (string, fret) pairs; mono notes → length-1 tuple.
+EXPECTED_TAB = [((0, 0),), ((1, 0),), ((2, 0),), ((3, 0),), ((4, 0),), ((5, 0),)]
 
 # Clef: "treble8vb" → sign='G', octaveChange=-1
 EXPECTED_CLEF_SIGN = "G"
@@ -137,7 +138,7 @@ class TestNoteEvents:
     def test_note_pitches(self, note_events):
         # midi_note is already rounded to int; ±0.5 is effectively exact match
         # for calibrated open-string recordings.
-        for event, expected in zip(note_events, EXPECTED_MIDI):
+        for event, expected in zip(note_events, EXPECTED_MIDI, strict=False):
             assert abs(event.midi_note - expected) <= 0.5, (
                 f"Expected MIDI {expected}, got {event.midi_note} "
                 f"({event.frequency_hz:.1f} Hz)"
@@ -219,10 +220,10 @@ class TestTabAssignments:
     def test_tab_all_fret_zero(self, tab_assignments):
         for assignment in tab_assignments:
             if assignment is not None:
-                _, fret = assignment
-                assert fret == 0, (
-                    f"Open string expected fret 0, got {fret}"
-                )
+                for _s, fret in assignment:
+                    assert fret == 0, (
+                        f"Open string expected fret 0, got {fret}"
+                    )
 
     def test_tab_exact_string_assignments(self, tab_assignments):
         # Compare in onset order (low string played first = ascending MIDI order)

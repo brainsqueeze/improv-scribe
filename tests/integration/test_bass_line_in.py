@@ -60,12 +60,14 @@ EXPECTED_WRITTEN_MIDI_BY_BACKEND: dict[str, list[int]] = {
 }
 EXPECTED_WRITTEN_MIDI = EXPECTED_WRITTEN_MIDI_BY_BACKEND[_BACKEND]
 
-# Tab: every open string → (string_idx, fret=0), 0-based from lowest string
-# basic-pitch Phase 2: last event is chord [28,43]; lowest pitch used for tab.
-EXPECTED_TAB_BY_BACKEND: dict[str, list[tuple[int, int]]] = {
-    "crepe":       [(0, 0), (1, 0), (2, 0), (3, 0)],
-    "pyin":        [(0, 0), (1, 0), (2, 0), (3, 0)],
-    "basic_pitch": [(0, 0), (1, 0), (2, 0), (0, 0)],  # chord's lowest pitch E1 -> string 0
+# Tab: every open string → ((string_idx, fret=0),), 0-based from lowest string.
+# Phase 2: each assignment is a tuple of (string, fret) pairs; mono → length-1 tuple.
+# basic-pitch Phase 2: last event is chord [28,43]; chord-aware DP assigns E1→string 0
+# and G2→string 3, both open (fret 0).
+EXPECTED_TAB_BY_BACKEND: dict[str, list[tuple[tuple[int, int], ...]]] = {
+    "crepe":       [((0, 0),), ((1, 0),), ((2, 0),), ((3, 0),)],
+    "pyin":        [((0, 0),), ((1, 0),), ((2, 0),), ((3, 0),)],
+    "basic_pitch": [((0, 0),), ((1, 0),), ((2, 0),), ((0, 0), (3, 0))],  # chord [28,43] → strings 0+3
 }
 EXPECTED_TAB = EXPECTED_TAB_BY_BACKEND[_BACKEND]
 
@@ -253,10 +255,10 @@ class TestTabAssignments:
     def test_tab_all_fret_zero(self, tab_assignments):
         for assignment in tab_assignments:
             if assignment is not None:
-                _, fret = assignment
-                assert fret == 0, (
-                    f"Open string expected fret 0, got {fret}"
-                )
+                for _s, fret in assignment:
+                    assert fret == 0, (
+                        f"Open string expected fret 0, got {fret}"
+                    )
 
     def test_tab_exact_string_assignments(self, tab_assignments):
         # Compare in onset order (low string played first = ascending MIDI order)

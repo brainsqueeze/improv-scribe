@@ -26,10 +26,10 @@ def _make_tempo(bpm: float = 120.0) -> TempoResult:
 
 def _make_note(midi: int, ql: float = 1.0) -> QuantizedNote:
     return QuantizedNote(
-        midi_note=midi,
-        frequency_hz=0.0,
-        confidence=1.0,
-        cents_deviation=0.0,
+        midi_notes=(midi,),
+        frequencies_hz=(0.0,),
+        confidences=(1.0,),
+        cents_deviations=(0.0,),
         onset_beat=0.0,
         duration_beats=ql,
         duration_type=NoteDuration.QUARTER,
@@ -40,10 +40,10 @@ def _make_note(midi: int, ql: float = 1.0) -> QuantizedNote:
 
 def _make_rest(ql: float = 1.0) -> QuantizedNote:
     return QuantizedNote(
-        midi_note=0,
-        frequency_hz=0.0,
-        confidence=1.0,
-        cents_deviation=0.0,
+        midi_notes=(),
+        frequencies_hz=(),
+        confidences=(),
+        cents_deviations=(),
         onset_beat=0.0,
         duration_beats=ql,
         duration_type=NoteDuration.QUARTER,
@@ -95,8 +95,8 @@ class TestComputeTabAssignments:
 
         for assignment in assignments:
             if assignment is not None:
-                _, fret = assignment
-                assert 0 <= fret <= 22, f"Fret {fret} out of range [0, 22]"
+                for _s, fret in assignment:
+                    assert 0 <= fret <= 22, f"Fret {fret} out of range [0, 22]"
 
     def test_compute_tab_assignments_all_none_for_all_rests(self, guitar_profile):
         """A list of only rests must yield all None assignments."""

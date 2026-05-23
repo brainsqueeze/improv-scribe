@@ -154,7 +154,7 @@ class ScoreBuilder:
 
     def compute_tab_assignments(
         self, notes: list[QuantizedNote]
-    ) -> list[tuple[int, int] | None]:
+    ) -> list[tuple[tuple[int, int], ...] | None]:
         """
         Return fret assignments for notes; None entries for rests.
 
@@ -167,9 +167,11 @@ class ScoreBuilder:
 
         Returns
         -------
-        list[tuple[int, int] | None]
-            Parallel to *notes*. Each non-rest entry is (string_idx, fret)
-            where string_idx is 0-based from the lowest string.
+        list[tuple[tuple[int, int], ...] | None]
+            Parallel to *notes*. Each non-rest entry is a tuple of
+            (string_idx, fret) pairs sorted by string ascending.
+            Mono notes get length-1 tuples (``((string_idx, fret),)``).
+            Chord notes get length-N tuples with distinct strings.
             None for rests.
         """
         if not self._include_tab:
