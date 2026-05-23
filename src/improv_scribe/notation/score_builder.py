@@ -29,6 +29,7 @@ This bypasses music21's incomplete tablature support entirely.
 
 from __future__ import annotations
 
+import music21.chord
 import music21.clef
 import music21.instrument
 import music21.metadata
@@ -134,8 +135,10 @@ class ScoreBuilder:
             dur = Duration(quarterLength=qn.quarter_length)
             if qn.is_rest:
                 element: music21.note.GeneralNote = music21.note.Rest(duration=dur)
+            elif len(qn.midi_notes) == 1:
+                element = music21.note.Note(qn.midi_notes[0], duration=dur)
             else:
-                element = music21.note.Note(qn.midi_note, duration=dur)
+                element = music21.chord.Chord(list(qn.midi_notes), duration=dur)
 
             part.append(element)
 
@@ -189,10 +192,13 @@ class ScoreBuilder:
         for qn in notes:
             if qn.is_rest:
                 continue
-            n = music21.note.Note(qn.midi_note)
-            n.quarterLength = qn.quarter_length
-            n.offset = qn.onset_beat
-            part.insert(n.offset, n)
+            if len(qn.midi_notes) == 1:
+                el: music21.note.GeneralNote = music21.note.Note(qn.midi_notes[0])
+            else:
+                el = music21.chord.Chord(list(qn.midi_notes))
+            el.quarterLength = qn.quarter_length
+            el.offset = qn.onset_beat
+            part.insert(el.offset, el)
 
         score.append(part)
         return score

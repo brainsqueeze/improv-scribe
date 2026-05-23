@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import os
 
-import numpy as np
 import music21.clef
 import music21.note
+import numpy as np
 
 from improv_scribe.analysis.instrument_profiles import Instrument, get_profile
 from tests.integration.conftest import SAMPLE_ROOT, make_pipeline_fixtures
@@ -51,12 +51,12 @@ EXPECTED_MIDI_BY_BACKEND: dict[str, list[int]] = {
 EXPECTED_MIDI = EXPECTED_MIDI_BY_BACKEND[_BACKEND]
 
 # Notes are written at concert pitch (bass8vb clef carries the octave offset).
-# basic-pitch Phase 2: chord [28,43] is serialised via midi_note (lowest pitch),
-# so the score sees MIDI 28 for the last event — same as the first E1 event.
+# basic-pitch Phase 2 (Tasks 5+6): chord [28,43] is serialised as a
+# music21.chord.Chord, so both pitches appear in the score.
 EXPECTED_WRITTEN_MIDI_BY_BACKEND: dict[str, list[int]] = {
     "crepe":       [28, 33, 38, 43],
     "pyin":        [28, 33, 38, 43],
-    "basic_pitch": [28, 28, 33, 38],  # chord [28,43] -> midi_note=28; no 43 in score
+    "basic_pitch": [28, 28, 33, 38, 43],  # chord [28,43] emits both pitches; 28 appears twice
 }
 EXPECTED_WRITTEN_MIDI = EXPECTED_WRITTEN_MIDI_BY_BACKEND[_BACKEND]
 
@@ -165,7 +165,7 @@ class TestNoteEvents:
     def test_note_pitches(self, note_events):
         # midi_note is already rounded to int; ±0.5 is effectively exact match
         # for calibrated open-string recordings.
-        for event, expected in zip(note_events, EXPECTED_MIDI):
+        for event, expected in zip(note_events, EXPECTED_MIDI, strict=True):
             assert abs(event.midi_note - expected) <= 0.5, (
                 f"Expected MIDI {expected}, got {event.midi_note} "
                 f"({event.frequency_hz:.1f} Hz)"
@@ -228,9 +228,15 @@ class TestScore:
         )
 
     def test_score_written_pitches(self, score):
+        import music21.chord
         part = score.parts[0]
-        notes = list(part.recurse().getElementsByClass(music21.note.Note))
-        written_midis = sorted([n.pitch.midi for n in notes])
+        written_midis: list[int] = []
+        for el in part.recurse().notes:
+            if isinstance(el, music21.chord.Chord):
+                written_midis.extend(p.midi for p in el.pitches)
+            else:
+                written_midis.append(el.pitch.midi)
+        written_midis = sorted(written_midis)
         assert written_midis == sorted(EXPECTED_WRITTEN_MIDI), (
             f"Written MIDIs {written_midis} != expected {sorted(EXPECTED_WRITTEN_MIDI)}"
         )
