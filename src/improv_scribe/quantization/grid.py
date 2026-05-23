@@ -77,11 +77,8 @@ def to_quarter_length(duration: NoteDuration) -> float:
 class QuantizedNote:
     """A NoteEvent after rhythm quantization, chord-capable.
 
-    Phase 0 of the polyphonic migration introduces tuple-typed pitch fields
-    matching NoteEvent. Rests carry empty tuples for all pitch fields.
-    Back-compat properties wrap the first element so existing consumers
-    (notation, tab, MIDI export) continue to work without modification.
-    The properties will be removed in Phase 2.
+    Pitch fields are tuples parallel to ``midi_notes``. Singleton tuples for
+    monophonic notes, length-N tuples for chords, empty tuples for rests.
 
     Parameters
     ----------

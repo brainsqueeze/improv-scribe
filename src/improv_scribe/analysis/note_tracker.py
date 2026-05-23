@@ -43,10 +43,6 @@ class NoteEvent:
     detections emit tuples of length 2+, with `midi_notes` sorted ascending
     so chord identity is canonical.
 
-    Phase 0 of the polyphonic migration introduces the tuple fields and
-    keeps single-element back-compat properties for callers that have not
-    yet been migrated. The properties will be removed in Phase 2.
-
     Parameters
     ----------
     onset_s : float

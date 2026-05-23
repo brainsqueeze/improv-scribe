@@ -291,7 +291,7 @@ class MainWindow(QMainWindow):
                     return "/".join(_midi_name(m) for m in qn.midi_notes)
                 _debug = [
                     (a, _format_note_names(n)) if a is not None else (None, "rest")
-                    for n, a in zip(quantized_notes, self._last_tab_assignments)
+                    for n, a in zip(quantized_notes, self._last_tab_assignments, strict=True)
                 ]
                 print("[TAB DEBUG] (assignment, note):", _debug)
                 self._last_profile = profile

@@ -1,8 +1,6 @@
-"""Unit tests for QuantizedNote's chord-capable shape (Phase 0)."""
+"""Unit tests for QuantizedNote's chord-capable shape."""
 
 from __future__ import annotations
-
-import pytest
 
 from improv_scribe.quantization.grid import NoteDuration, QuantizedNote
 
