@@ -1057,3 +1057,140 @@ rendering is verified separately on hand-constructed inputs.
    E1 merges with the G2 into a chord. This is expected, but
    Phase 3 should be aware that clustering can change basic-pitch's
    per-onset event counts on mono samples.
+
+---
+
+## 15. Phase 3 Prerequisite — Open-Chord Recording Probe (run 2026-05-23)
+
+User-provided real open-chord recordings landed in
+`samples/guitar/chords/` — five files on a USB-in electric guitar, each
+~12.3 s of strummed open-chord content (5-6 strums per recording):
+
+- `6_string_electric_open_E_chord.mp3` (E2 B2 E3 G#3 B3 E4 — 6 notes)
+- `6_string_electric_open_A_chord.mp3` (A2 E3 A3 C#4 E4 — 5 notes)
+- `6_string_electric_open_D_chord.mp3` (D3 A3 D4 F#4 — 4 notes)
+- `6_string_electric_open_G_chord.mp3` (G2 B2 D3 G3 B3 G4 — 6 notes)
+- `6_string_electric_open_C_chord.mp3` (C3 E3 G3 C4 E4 — 5 notes)
+
+Ran the full Phase 2 pipeline (`_BasicPitchBackend` → clustering →
+chord NoteEvents) against each.
+
+### 15.1 Cluster count matches strum count
+
+The user is strumming each chord 5–6 times. Per-recording cluster counts:
+
+| Sample | Strums detected (clusters) | Comments |
+|---|---|---|
+| E chord | 5 | one strum fragments across two clusters at 4.774/4.925s |
+| A chord | 6 | last "strum" at 11.489s (0.4s dur) is likely a decay tail |
+| D chord | 5 | clean |
+| G chord | 5 | clean |
+| C chord | 6 | last two clusters at 8.643/8.794s are one strum fragmented |
+
+The cluster algorithm is doing its job. The fragmentations happen when a
+chord decays past the 100ms window with one note dropping below the
+amplitude floor mid-decay and re-detecting.
+
+### 15.2 Per-strum note recall drops sharply vs dyads
+
+basic-pitch reliably detects 2–4 of the 4–6 chord members per strum.
+High strings (G4, E4, C#4, D4) are consistently missed — they have
+lower amplitude and shorter duration than the bass notes. Best per-strum
+recall by chord:
+
+| Chord | Expected | Best detected per-strum |
+|---|---|---|
+| E (6 notes) | E2 B2 E3 G#3 B3 E4 | (40, 47, 56) = E2 B2 G#3 (3/6) |
+| A (5 notes) | A2 E3 A3 C#4 E4 | (45, 52, 57) = A2 E3 A3 (3/5) |
+| D (4 notes) | D3 A3 D4 F#4 | (50, 57, 66) = D3 A3 F#4 (3/4) |
+| G (6 notes) | G2 B2 D3 G3 B3 G4 | (43, 47, 50, 55) = G2 B2 D3 G3 (4/6) |
+| C (5 notes) | C3 E3 G3 C4 E4 | (48, 52, 55) = C3 E3 G3 (3/5) |
+
+basic-pitch's amplitude floor (0.65) drops the higher-voice members.
+Lowering the floor catches them but re-introduces spurious mid-range
+detections — Phase 2 calibration recorded 0.65 as the sweet spot for
+mono samples, and changing it now would invalidate the Phase 1/Phase 2
+gates.
+
+### 15.3 Phase 3 ground-truth decision: accept actual detection
+
+User decision (recorded 2026-05-23): same approach as Phase 2 §13.3 —
+Phase 3 integration tests assert **what basic-pitch actually detects**
+per strum, not idealised 5-6 of N chord-member recall. The ground truth
+is recorded per-cluster, exactly. The chord-rendering pipeline (
+`music21.chord.Chord`, no-string-conflict tab DP, MIDI iteration) is
+the thing being validated; basic-pitch's recall on full chord voicings
+is a quality issue for Phase 4 (separate spec, only if we want to
+invest in chord-recall improvements via chord-template matching, lower
+absolute floor + cluster-internal relative filter, or chord-aware
+amplitude smoothing).
+
+### 15.4 Implications for Phase 3 plan
+
+- The clustering algorithm doesn't need changes. It correctly groups
+  strum-events; the recall issue is upstream (basic-pitch's amplitude
+  filter at the backend boundary), not in clustering.
+- Phase 3's tab DP (chord-aware DP from Phase 2 Task 8) already handles
+  3–4 member chords correctly — the no-string-conflict constraint
+  applies regardless of chord size.
+- Phase 3 integration tests follow Phase 2's pattern: one test file per
+  open-chord sample (`test_guitar_open_E_chord.py` etc.) with per-cluster
+  `EXPECTED_MIDI_TUPLES_BY_BACKEND["basic_pitch"]` set from the probe.
+- Phase 3 should NOT attempt to "complete" partial chords by inferring
+  the missing voicings — that's a chord-recognition feature out of
+  Phase 3 scope.
+
+### 15.5 Exact basic-pitch output for Phase 3 ground truth
+
+**E chord** (5 clusters):
+1. `(47, 56)` at 2.288s — B2 + G#3
+2. `(40, 47, 56)` at 4.774s — E2 + B2 + G#3
+3. `(47,)` at 4.925s — B2 only (decay re-detection)
+4. `(40, 47)` at 7.156s — E2 + B2
+5. `(47, 56)` at 9.409s — B2 + G#3
+
+**A chord** (6 clusters):
+1. `(57,)` at 1.939s — A3 only
+2. `(45,)` at 4.054s — A2 only
+3. `(45, 52)` at 6.041s — A2 + E3
+4. `(45, 52, 57)` at 7.887s — A2 + E3 + A3
+5. `(45, 52)` at 9.711s — A2 + E3
+6. `(40,)` at 11.489s — spurious E2 detection at decay tail (0.4s duration)
+
+**D chord** (5 clusters):
+1. `(45, 50)` at 1.115s — A2 + D3 (A2 is below the open-D voicing; harmonic of A3)
+2. `(50, 57, 66)` at 3.043s — D3 + A3 + F#4
+3. `(45, 50)` at 5.041s — A2 + D3
+4. `(45, 66)` at 8.550s — A2 + F#4 (no D3?)
+5. `(62,)` at 9.850s — D4 only (decay tail)
+
+**G chord** (5 clusters):
+1. `(43, 47, 50, 55)` at 1.091s — G2 + B2 + D3 + G3 (best chord detection)
+2. `(47, 50, 55)` at 2.881s — B2 + D3 + G3
+3. `(50, 55, 59)` at 4.705s — D3 + G3 + B3
+4. `(47, 50)` at 6.529s — B2 + D3
+5. `(43, 47, 50, 55)` at 8.329s — G2 + B2 + D3 + G3 (matches #1)
+
+**C chord** (6 clusters):
+1. `(48, 52, 55)` at 2.033s — C3 + E3 + G3
+2. `(40, 48, 55)` at 3.658s — E2 + C3 + G3 (E2 is unexpected; sympathetic from C major root)
+3. `(48, 55, 60)` at 5.308s — C3 + G3 + C4
+4. `(48, 60)` at 7.132s — C3 + C4
+5. `(48, 55)` at 8.643s — C3 + G3
+6. `(48, 52)` at 8.794s — C3 + E3 (fragmented from previous strum)
+
+### 15.6 Observations for Phase 4 (not Phase 3)
+
+- The "decay re-detection" pattern (E chord cluster 3, A chord cluster 6,
+  D chord cluster 5, C chord cluster 6) suggests a Phase 4 enhancement:
+  drop very short (<500 ms) singleton clusters when they fall within the
+  decay tail of a recent multi-member cluster.
+- Octave/sympathetic detections (A2 in D chord, E2 in C chord) are
+  recurring patterns that a chord-template matcher could correct, but
+  Phase 4 first needs evidence whether these confuse downstream
+  notation/tab output enough to warrant the complexity.
+- Low-string root-note misdetection: D chord cluster 4 missing the D3
+  root, A chord clusters 1-2 detecting only the A note (no other
+  members). The amplitude profile of basic-pitch on guitar strums
+  appears strongly biased toward whichever string was struck loudest,
+  not toward the harmonic structure.
