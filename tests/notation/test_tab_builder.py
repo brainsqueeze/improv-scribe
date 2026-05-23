@@ -377,3 +377,49 @@ class TestAssignFretsChordAware:
         # Both should be fret 0 (open strings)
         for _s, f in shape:
             assert f == 0
+
+    def test_four_member_chord_d_major_open(self):
+        """Open D major (D3, A3, D4, F#4) — basic-pitch detects 3-4 of 4
+        per Phase 3 §15.5. Tests the DP scales to 4 distinct strings."""
+        # D3=50, A3=57, D4=62, F#4=66
+        result = assign_frets([_qn((50, 57, 62, 66))], Instrument.GUITAR)
+        assert len(result) == 1
+        assert result[0] is not None
+        shape = result[0]
+        assert len(shape) == 4
+        # All four must use distinct strings
+        strings = [s for s, _f in shape]
+        assert len(set(strings)) == 4
+        # Frets must be plausible for guitar (open D major shape: strings 2/3/4/5)
+        for s, f in shape:
+            assert 0 <= s <= 5
+            assert 0 <= f <= 22
+
+    def test_six_member_chord_g_major_open(self):
+        """Open G major (G2, B2, D3, G3, B3, G4) — six members across six strings.
+        Tests the DP scales to a fully-voiced 6-note shape."""
+        # G2=43, B2=47, D3=50, G3=55, B3=59, G4=67
+        result = assign_frets([_qn((43, 47, 50, 55, 59, 67))], Instrument.GUITAR)
+        assert len(result) == 1
+        assert result[0] is not None
+        shape = result[0]
+        assert len(shape) == 6
+        # Six members must occupy six distinct strings (all of them)
+        strings = sorted(s for s, _f in shape)
+        assert strings == [0, 1, 2, 3, 4, 5]
+
+    def test_chord_progression_dp_transitions(self):
+        """A progression of 4-member chords (D, G, C) should produce a valid
+        assignment for each. Tests DP transition cost on chord-to-chord."""
+        # D: (50, 57, 62, 66) — D3 A3 D4 F#4
+        # G: (43, 50, 55, 59) — G2 D3 G3 B3 (subset of full G voicing)
+        # C: (48, 52, 55, 60) — C3 E3 G3 C4
+        result = assign_frets(
+            [_qn((50, 57, 62, 66)), _qn((43, 50, 55, 59)), _qn((48, 52, 55, 60))],
+            Instrument.GUITAR,
+        )
+        assert len(result) == 3
+        for shape in result:
+            assert shape is not None
+            strings = [s for s, _f in shape]
+            assert len(set(strings)) == len(strings)   # no string conflicts within a chord
