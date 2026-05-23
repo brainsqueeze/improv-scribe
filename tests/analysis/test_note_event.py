@@ -56,27 +56,6 @@ class TestNoteEventShape:
         assert event.duration_s == 0.0
 
 
-class TestNoteEventBackCompatProperties:
-    """Phase 0 keeps these properties for callers that haven't migrated yet.
-    Phase 2 removes them; the migration completion check is a grep for `.midi_note`
-    and `.frequency_hz` returning zero hits in `src/`."""
-
-    def test_midi_note_returns_first_element(self):
-        assert _make(midi_notes=(60,)).midi_note == 60
-        assert _make(midi_notes=(60, 64, 67)).midi_note == 60   # lowest
-
-    def test_frequency_hz_returns_first_element(self):
-        event = _make(midi_notes=(69,))   # A4 = 440 Hz
-        assert event.frequency_hz == pytest.approx(440.0)
-
-    def test_confidence_returns_mean(self):
-        event = _make(midi_notes=(60, 64), confidences=(0.8, 0.6))
-        assert event.confidence == pytest.approx(0.7)
-
-    def test_cents_deviation_returns_first_element(self):
-        event = _make(midi_notes=(60, 64), cents_deviations=(5.0, -3.0))
-        assert event.cents_deviation == pytest.approx(5.0)
-
 
 class TestMergeConsecutiveSamePitch:
     """The merge helper collapses back-to-back same-pitch events caused by

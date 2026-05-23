@@ -116,32 +116,6 @@ class QuantizedNote:
 
     is_rest: bool = False
 
-    # ------------------------------------------------------------------
-    # Back-compat shims — removed in Phase 2
-    # ------------------------------------------------------------------
-
-    @property
-    def midi_note(self) -> int:
-        """Lowest MIDI note, or 0 for a rest. Back-compat shim."""
-        return self.midi_notes[0] if self.midi_notes else 0
-
-    @property
-    def frequency_hz(self) -> float:
-        """First-pitch frequency, or 0.0 for a rest. Back-compat shim."""
-        return self.frequencies_hz[0] if self.frequencies_hz else 0.0
-
-    @property
-    def confidence(self) -> float:
-        """Mean confidence across chord members, or 1.0 for a rest."""
-        if not self.confidences:
-            return 1.0
-        return sum(self.confidences) / len(self.confidences)
-
-    @property
-    def cents_deviation(self) -> float:
-        """First-pitch cents deviation, or 0.0 for a rest. Back-compat shim."""
-        return self.cents_deviations[0] if self.cents_deviations else 0.0
-
 
 # ---------------------------------------------------------------------------
 # Quantizer

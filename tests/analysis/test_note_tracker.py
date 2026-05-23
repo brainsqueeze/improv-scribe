@@ -79,7 +79,7 @@ class TestNoteTracker:
         events = tracker.process(pitch_result, onsets)
 
         assert len(events) == 1
-        assert events[0].midi_note == 40
+        assert events[0].midi_notes[0] == 40
         assert events[0].onset_s == pytest.approx(0.0)
 
     def test_two_notes(self, config, guitar_profile):
@@ -101,8 +101,8 @@ class TestNoteTracker:
         events = tracker.process(pitch_result, onsets)
 
         assert len(events) == 2
-        assert events[0].midi_note == 40   # E2
-        assert events[1].midi_note == 45   # A2
+        assert events[0].midi_notes[0] == 40   # E2
+        assert events[1].midi_notes[0] == 45   # A2
 
     def test_no_onsets_returns_empty(self, config, guitar_profile):
         frames = [(0.1, 440.0, 0.9)]

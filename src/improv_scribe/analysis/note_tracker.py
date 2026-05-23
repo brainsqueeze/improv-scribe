@@ -79,43 +79,20 @@ class NoteEvent:
     def is_chord(self) -> bool:
         return len(self.midi_notes) > 1
 
-    # ------------------------------------------------------------------
-    # Back-compat shims — removed in Phase 2
-    # ------------------------------------------------------------------
-
-    @property
-    def midi_note(self) -> int:
-        """Lowest MIDI note. Back-compat shim — prefer `midi_notes[0]`."""
-        return self.midi_notes[0]
-
-    @property
-    def frequency_hz(self) -> float:
-        """First-pitch frequency. Back-compat shim — prefer `frequencies_hz[0]`."""
-        return self.frequencies_hz[0]
-
-    @property
-    def confidence(self) -> float:
-        """Mean confidence across chord members. Back-compat shim."""
-        return sum(self.confidences) / len(self.confidences)
-
-    @property
-    def cents_deviation(self) -> float:
-        """First-pitch cents deviation. Back-compat shim."""
-        return self.cents_deviations[0]
-
     def __repr__(self) -> str:
+        mean_conf = sum(self.confidences) / len(self.confidences)
         if self.is_chord:
             return (
                 f"NoteEvent(midi={list(self.midi_notes)}, "
                 f"onset={self.onset_s:.3f}s, "
                 f"dur={self.duration_s:.3f}s, "
-                f"conf={self.confidence:.2f})"
+                f"conf={mean_conf:.2f})"
             )
         return (
             f"NoteEvent(midi={self.midi_notes[0]}, "
             f"onset={self.onset_s:.3f}s, "
             f"dur={self.duration_s:.3f}s, "
-            f"conf={self.confidence:.2f})"
+            f"conf={mean_conf:.2f})"
         )
 
 

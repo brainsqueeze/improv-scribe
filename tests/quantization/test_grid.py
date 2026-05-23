@@ -118,7 +118,7 @@ class TestRhythmQuantizer:
         quantizer = RhythmQuantizer(_make_tempo(120.0))
         result = quantizer.quantize(events)
         note_elements = [n for n in result if not n.is_rest]
-        assert note_elements[0].midi_note == 45
+        assert note_elements[0].midi_notes[0] == 45
 
     def test_no_triplets_when_disabled(self):
         events = [_make_event(0.0, 1.0 / 6.0)]   # triplet-quarter duration

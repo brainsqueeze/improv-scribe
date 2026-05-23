@@ -132,23 +132,23 @@ class TestNoteEvents:
         # If this fails: print note_events to inspect what the pipeline detected.
         assert len(note_events) == NOTE_COUNT, (
             f"Expected {NOTE_COUNT} NoteEvents, got {len(note_events)}: "
-            f"{[e.midi_note for e in note_events]}"
+            f"{[e.midi_notes[0] for e in note_events]}"
         )
 
     def test_note_pitches(self, note_events):
         # midi_note is already rounded to int; ±0.5 is effectively exact match
         # for calibrated open-string recordings.
         for event, expected in zip(note_events, EXPECTED_MIDI, strict=False):
-            assert abs(event.midi_note - expected) <= 0.5, (
-                f"Expected MIDI {expected}, got {event.midi_note} "
-                f"({event.frequency_hz:.1f} Hz)"
+            assert abs(event.midi_notes[0] - expected) <= 0.5, (
+                f"Expected MIDI {expected}, got {event.midi_notes[0]} "
+                f"({event.frequencies_hz[0]:.1f} Hz)"
             )
 
     def test_notes_in_instrument_range(self, note_events):
         profile = get_profile(INSTRUMENT)
         for event in note_events:
-            assert profile.midi_min <= event.midi_note <= profile.midi_max, (
-                f"MIDI {event.midi_note} outside instrument range "
+            assert profile.midi_min <= event.midi_notes[0] <= profile.midi_max, (
+                f"MIDI {event.midi_notes[0]} outside instrument range "
                 f"[{profile.midi_min}, {profile.midi_max}]"
             )
 
@@ -178,8 +178,8 @@ class TestQuantizedNotes:
 
     def test_quantized_pitches_unchanged(self, quantized_notes, note_events):
         # Quantizer must not alter pitch — only timing.
-        quantized_midis = [n.midi_note for n in quantized_notes if not n.is_rest]
-        event_midis = [e.midi_note for e in note_events]
+        quantized_midis = [n.midi_notes[0] for n in quantized_notes if not n.is_rest]
+        event_midis = [e.midi_notes[0] for e in note_events]
         assert quantized_midis == event_midis
 
 
