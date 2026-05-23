@@ -158,9 +158,9 @@ def inject_tab_part(
     ]
     assignment_iter = iter(non_rest_assignments)
 
-    # Map from id(first_note_el_in_slot) → MIDI-ordered assignment tuple.
-    slot_assignment_map: dict[int, tuple[tuple[int, int], ...]] = {}
-    # Map from id(any_note_el) → assignment tuple (used for tie continuations).
+    # Map from id(any_note_el_in_slot) → MIDI-ordered assignment tuple.
+    # Chord siblings all map to the same tuple; the annotation step uses the
+    # sibling's index within the slot to pick the right (string, fret) pair.
     note_assignment_map: dict[int, tuple[tuple[int, int], ...]] = {}
     current_assignment: tuple[tuple[int, int], ...] | None = None
 
@@ -181,7 +181,6 @@ def inject_tab_part(
                     midi_ordered = _order_assignment_by_midi(
                         current_assignment, midi_tuning
                     )
-                    slot_assignment_map[id(first_note)] = midi_ordered
                     for note_el in slot:
                         note_assignment_map[id(note_el)] = midi_ordered
             else:
@@ -189,7 +188,6 @@ def inject_tab_part(
                 if raw is not None:
                     current_assignment = raw
                     midi_ordered = _order_assignment_by_midi(raw, midi_tuning)
-                    slot_assignment_map[id(first_note)] = midi_ordered
                     for note_el in slot:
                         note_assignment_map[id(note_el)] = midi_ordered
 
