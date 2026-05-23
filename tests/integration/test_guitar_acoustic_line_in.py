@@ -19,7 +19,7 @@ import numpy as np
 from improv_scribe.analysis.instrument_profiles import Instrument, get_profile
 from tests.integration.conftest import SAMPLE_ROOT, make_pipeline_fixtures
 
-_BACKEND = os.getenv("ATS_PITCH_BACKEND", "crepe")
+_BACKEND = os.getenv("ATS_PITCH_BACKEND", "basic_pitch")
 
 # ---------------------------------------------------------------------------
 # Ground truth

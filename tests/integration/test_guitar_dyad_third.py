@@ -23,7 +23,7 @@ SAMPLE_PATH = SAMPLE_ROOT / "guitar" / "chords" / "6_string_electric_major_third
 INSTRUMENT = Instrument.GUITAR
 EXPECTED_DURATION_S = 12.30
 
-_BACKEND = os.getenv("ATS_PITCH_BACKEND", "crepe")
+_BACKEND = os.getenv("ATS_PITCH_BACKEND", "basic_pitch")
 
 # Per-backend: only basic_pitch can detect chord events; CREPE/pyin are
 # monophonic and will produce singletons for the same sample (best-effort

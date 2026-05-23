@@ -25,7 +25,7 @@ RING_BUFFER_SECONDS: float = float(os.getenv("ATS_RING_BUFFER_SECONDS", "10.0"))
 # Analysis defaults
 # ---------------------------------------------------------------------------
 
-PITCH_BACKEND: str = os.getenv("ATS_PITCH_BACKEND", "crepe")
+PITCH_BACKEND: str = os.getenv("ATS_PITCH_BACKEND", "basic_pitch")
 FRAME_LENGTH: int = int(os.getenv("ATS_FRAME_LENGTH", "2048"))
 HOP_LENGTH: int = int(os.getenv("ATS_HOP_LENGTH", "512"))
 CONFIDENCE_THRESHOLD: float = float(os.getenv("ATS_CONFIDENCE_THRESHOLD", "0.5"))
