@@ -1194,3 +1194,83 @@ amplitude smoothing).
   members). The amplitude profile of basic-pitch on guitar strums
   appears strongly biased toward whichever string was struck loudest,
   not toward the harmonic structure.
+
+---
+
+## 16. Phase 3 Outcome (landed 2026-05-23)
+
+Phase 3 — open-chord detection (3–6 member chords) — completed in 4
+task commits on `chord-detection`. No worktree (small scope). The
+phase delivered:
+
+- 3 new tab DP unit tests for 4- and 6-member shapes + chord
+  progressions (Task 2, commit `b8e1439`). Phase 2's no-string-conflict
+  DP scales to the full open-chord voicing sizes with no algorithmic
+  changes. All 38 tab tests now pass.
+- 5 new integration test files (Tasks 3-7, batched in commit `3b3079f`),
+  one per open-chord sample, asserting the exact basic-pitch detection
+  ground truth from spec §15.5. **All 30 chord tests pass under
+  basic_pitch on first run** — the §15.5 probe values match current
+  detection exactly. CREPE backend skips them gracefully.
+- PDF/MIDI render proof on the G chord sample (Task 8, commit `643740d`)
+  — see `docs/superpowers/phase3_chord_proof.pdf` (38 KB). The §14.3
+  quantizer bug did NOT fire on this sample, so the full real-audio
+  pipeline (basic-pitch → clustering → score → chord-aware tab DP →
+  MusicXML → MuseScore PDF) is verified working on actual recorded
+  audio with 4-member chord shapes.
+
+### 16.1 Phase gate results
+
+| Backend | Result |
+|---|---|
+| `ATS_PITCH_BACKEND=basic_pitch` | **312 passed, 4 skipped** (was 279/4 pre-Phase-3) |
+| `ATS_PITCH_BACKEND=crepe` | **284 passed, 32 skipped** (was 271/12 pre-Phase-3) |
+
+New tests added: 3 tab DP + 30 chord integration = 33 new test functions.
+Under CREPE, 20 of the 30 chord-test functions skip with "No ground
+truth recorded for backend crepe" + 10 audio-shape tests pass.
+
+### 16.2 What Phase 3 did NOT do
+
+- **No chord-recall improvement.** basic-pitch's per-strum recall stays
+  at 2–4 of 5–6 notes; ground truth records the actual detection.
+  Phase 4 work (separate spec) would address chord-recall via lower
+  amplitude floor + cluster-internal relative filter and/or
+  chord-template matching.
+- **No fragmentation cleanup.** Decay-tail re-detection (singleton
+  clusters arriving within ~500ms of a multi-member cluster, see §15.5
+  D/A/C chord tails) is left in the ground truth. Phase 4 could filter
+  these.
+- **No chord-name detection.** Phase 3 emits the detected pitches;
+  recognising these as "G major" labels is a separate Phase 5+ feature.
+- **No quantizer fix.** The §14.3 overlap bug affects PDF rendering on
+  some samples; the G chord happened to dodge it. Phase 4 should fix
+  it so all chord samples render reliably.
+
+### 16.3 What remains for Phase 4
+
+In rough priority order based on Phase 3 evidence:
+
+1. **Quantizer overlap bug** (§14.3) — blocks PDF rendering on chord
+   samples at clamped slow tempos. The most concrete Phase 4 item.
+   Affects: E, A, D, C chord samples (G chord happens to dodge it).
+2. **CLI `--backend` choice** — still lists only `{pyin,crepe}`;
+   `basic_pitch` selectable only via env var. Trivial fix.
+3. **Chord-recall improvement** — explore lowering the absolute
+   amplitude floor + cluster-internal relative filter to catch the
+   missing high voices (G4, E4, C#4, D4 in the §15.5 ground truth).
+4. **Decay-tail singleton filter** — drop very short (<500 ms)
+   singleton clusters that arrive within ~500ms of a recent
+   multi-member cluster (would clean up §15.5 clusters 3 of E, 6 of A,
+   5 of D, 6 of C).
+5. **Chord-name detection** — emit "Em", "G", "C" labels alongside the
+   detected pitches.
+
+### 16.4 Phase 3 confirmed Phase 2's design
+
+The most important Phase 3 finding: **Phase 2's algorithms required
+zero changes to handle 4–6 member chords.** The N-member-agnostic
+design choices (Cartesian-product shape enumeration, lexicographic DP
+tie-break, chord-sibling MusicXML walker, MIDI iteration over
+midi_notes) all scale without modification. This validates the design
+decisions made during Phase 2 brainstorming and review.
