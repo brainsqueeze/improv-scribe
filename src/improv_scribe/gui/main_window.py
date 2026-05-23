@@ -284,8 +284,13 @@ class MainWindow(QMainWindow):
                 _NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
                 def _midi_name(m: int) -> str:
                     return _NOTE_NAMES[m % 12] + str(m // 12 - 1)
+                def _format_note_names(qn) -> str:
+                    """Format chord-aware note display: 'E4' or 'E4/G4/B4'."""
+                    if qn.is_rest:
+                        return "rest"
+                    return "/".join(_midi_name(m) for m in qn.midi_notes)
                 _debug = [
-                    (a, _midi_name(n.midi_note)) if a is not None else (None, "rest")
+                    (a, _format_note_names(n)) if a is not None else (None, "rest")
                     for n, a in zip(quantized_notes, self._last_tab_assignments)
                 ]
                 print("[TAB DEBUG] (assignment, note):", _debug)
