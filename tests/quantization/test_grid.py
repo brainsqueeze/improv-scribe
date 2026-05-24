@@ -126,3 +126,110 @@ class TestRhythmQuantizer:
         result = quantizer.quantize(events)
         for n in result:
             assert "triplet" not in n.duration_type.value
+
+
+class TestQuantizerTiling:
+    """Phase 4 — RhythmQuantizer.quantize() must produce non-overlapping output.
+
+    The tiling invariant: for any consecutive pair of QuantizedNote entries
+    in the output list, prev.onset_beat + prev.duration_beats <= next.onset_beat.
+    """
+
+    def _quantize(self, events: list[NoteEvent], bpm: float = 120.0) -> list:
+        from improv_scribe.quantization.grid import RhythmQuantizer
+        return RhythmQuantizer(_make_tempo(bpm)).quantize(events)
+
+    def _assert_tiling(self, quantized: list) -> None:
+        """Assert no entry overlaps the next."""
+        for i in range(len(quantized) - 1):
+            prev = quantized[i]
+            nxt = quantized[i + 1]
+            end = prev.onset_beat + prev.duration_beats
+            assert end <= nxt.onset_beat + 1e-9, (
+                f"Overlap at index {i}: prev ends at {end}, next starts at {nxt.onset_beat}"
+            )
+
+    def test_consecutive_notes_tile_exactly(self):
+        # Two abutting quarter notes at 120 BPM: 0.0-0.5s, 0.5-1.0s
+        # = beats 0.0-1.0, 1.0-2.0
+        events = [
+            _make_event(0.0, 0.5),
+            _make_event(0.5, 1.0),
+        ]
+        q = self._quantize(events)
+        # No rest expected (they abut)
+        non_rests = [n for n in q if not n.is_rest]
+        assert len(non_rests) == 2
+        self._assert_tiling(q)
+        # Tile invariant strict here: 0.0 + 1.0 == 1.0
+        assert non_rests[0].onset_beat + non_rests[0].duration_beats == pytest.approx(non_rests[1].onset_beat)
+
+    def test_rest_fills_gap_exactly(self):
+        # Two quarter notes with a 1-beat gap at 120 BPM:
+        # 0.0-0.5s, then gap, then 1.0-1.5s = beats 0-1, gap 1-2, note 2-3
+        events = [
+            _make_event(0.0, 0.5),
+            _make_event(1.0, 1.5),
+        ]
+        q = self._quantize(events)
+        # Expect: note, rest, note
+        assert len(q) == 3
+        assert q[0].is_rest is False
+        assert q[1].is_rest is True
+        assert q[2].is_rest is False
+        self._assert_tiling(q)
+        # The rest should exactly fill the gap
+        assert q[1].duration_beats == pytest.approx(1.0)
+
+    def test_overlap_regression_dyad_sample_scenario(self):
+        # Reproduce the failing dyad-sample shape: 40 BPM tempo, onsets
+        # at irregular fractional beat positions that triggered the
+        # original §14.3 overlap bug.
+        # At 40 BPM: 1 beat = 1.5s. Onsets at 0.290s, 2.079s, 3.821s,
+        # 5.541s match the octave-dyads sample (basic-pitch output).
+        events = [
+            _make_event(0.290, 1.265, midi=40),
+            _make_event(2.079, 3.229, midi=41),
+            _make_event(3.821, 4.797, midi=55),
+            _make_event(5.541, 6.970, midi=45),
+        ]
+        q = self._quantize(events, bpm=40.0)
+        # Crucial: no overlap. This is the regression guard.
+        self._assert_tiling(q)
+        # All durations are exact catalog values
+        for entry in q:
+            ql = entry.quarter_length
+            assert ql > 0, f"zero or negative quarter_length at {entry}"
+
+    def test_triplet_quarter_duration_preserved(self):
+        # An event whose duration is exactly 2/3 beat at 120 BPM
+        # (1 beat = 0.5s; 2/3 beat = 0.333s). Triplet-quarter is 2/3 beat.
+        events = [_make_event(0.0, 0.333)]
+        q = self._quantize(events)
+        non_rests = [n for n in q if not n.is_rest]
+        assert len(non_rests) == 1
+        assert non_rests[0].duration_type == NoteDuration.TRIPLET_QUARTER
+        # Triplet-quarter = 2/3 beat = 2/3 quarter-length
+        assert non_rests[0].duration_beats == pytest.approx(2.0 / 3.0)
+
+    def test_phase_1_2_3_aligned_inputs_unchanged(self):
+        # Simulate clean-grid inputs as produced by CREPE/basic-pitch on the
+        # mono open-string samples at 120 BPM: onsets at beats 1,2,3,4,5,6
+        # with 1-beat durations.
+        events = [
+            _make_event(0.5, 1.0),   # beat 1, dur 1
+            _make_event(1.0, 1.5),   # beat 2, dur 1
+            _make_event(1.5, 2.0),   # beat 3, dur 1
+            _make_event(2.0, 2.5),   # beat 4, dur 1
+            _make_event(2.5, 3.0),   # beat 5, dur 1
+            _make_event(3.0, 3.5),   # beat 6, dur 1
+        ]
+        q = self._quantize(events)
+        non_rests = [n for n in q if not n.is_rest]
+        assert len(non_rests) == 6
+        # All snap to integer beat positions
+        for i, entry in enumerate(non_rests):
+            assert entry.onset_beat == pytest.approx(float(i + 1))
+            assert entry.duration_type == NoteDuration.QUARTER
+            assert entry.duration_beats == pytest.approx(1.0)
+        self._assert_tiling(q)
