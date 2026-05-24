@@ -160,8 +160,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Instrument type (default: guitar)"
     )
     p.add_argument(
-        "--backend", choices=["pyin", "crepe"], default="pyin",
-        help="Pitch detection backend (default: pyin)"
+        "--backend", choices=["pyin", "crepe", "basic_pitch"], default="pyin",
+        help=(
+            "Pitch detection backend (default: pyin). "
+            "'basic_pitch' requires `bash scripts/install_basic_pitch.sh` after env creation."
+        ),
     )
     p.add_argument(
         "--mode", choices=["auto", "raw"], default="auto",
