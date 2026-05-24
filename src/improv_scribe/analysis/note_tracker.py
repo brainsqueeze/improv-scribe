@@ -8,7 +8,7 @@ Strategy
 2. Take the median f0 across those frames (robust to attack transient artefacts).
 3. Convert Hz → MIDI note number (round to nearest semitone).
 4. Emit a NoteEvent with onset_s, offset_s (= next onset or last voiced frame),
-   midi_note, and mean confidence.
+   midi_notes (singleton tuple in the monophonic case), and mean confidence.
 
 MIDI conversion
 ---------------
@@ -27,7 +27,7 @@ import numpy as np
 
 from improv_scribe.analysis.instrument_profiles import InstrumentProfile
 from improv_scribe.analysis.onset import Onset
-from improv_scribe.analysis.pitch import PitchResult
+from improv_scribe.analysis.pitch import BasicPitchNote, PitchResult
 from improv_scribe.config import AppConfig
 
 # ---------------------------------------------------------------------------
@@ -36,31 +36,59 @@ from improv_scribe.config import AppConfig
 
 @dataclass
 class NoteEvent:
-    """
-    A single detected note with timing and pitch.
+    """A detected note or chord event with timing and pitch.
 
     All times are in seconds relative to the start of the recorded session.
-    """
-    onset_s: float          # note start time
-    offset_s: float         # note end time (next onset or last voiced frame)
-    midi_note: int          # nearest semitone (0–127)
-    frequency_hz: float     # median f0 across active frames
-    confidence: float       # mean voiced-probability across active frames
-    cents_deviation: float  # deviation from equal temperament (±50¢)
+    A monophonic detection emits singleton tuples (length 1). Chord
+    detections emit tuples of length 2+, with `midi_notes` sorted ascending
+    so chord identity is canonical.
 
-    # Future: list[int] for chord support
-    # Future: velocity (from onset strength or RMS)
+    Parameters
+    ----------
+    onset_s : float
+        Note start time.
+    offset_s : float
+        Note end time (next onset or last voiced frame).
+    midi_notes : tuple[int, ...]
+        MIDI note numbers (0–127), sorted ascending. Empty tuple for rests
+        (rests are represented in QuantizedNote, not NoteEvent — NoteEvent
+        always has at least one pitch).
+    frequencies_hz : tuple[float, ...]
+        Median f0 across active frames, parallel to midi_notes.
+    confidences : tuple[float, ...]
+        Mean voiced-probability across active frames, parallel to midi_notes.
+    cents_deviations : tuple[float, ...]
+        Deviation from equal temperament (-50 to +50), parallel to midi_notes.
+    """
+    onset_s: float
+    offset_s: float
+    midi_notes: tuple[int, ...]
+    frequencies_hz: tuple[float, ...]
+    confidences: tuple[float, ...]
+    cents_deviations: tuple[float, ...]
 
     @property
     def duration_s(self) -> float:
         return max(0.0, self.offset_s - self.onset_s)
 
+    @property
+    def is_chord(self) -> bool:
+        return len(self.midi_notes) > 1
+
     def __repr__(self) -> str:
+        mean_conf = sum(self.confidences) / len(self.confidences)
+        if self.is_chord:
+            return (
+                f"NoteEvent(midi={list(self.midi_notes)}, "
+                f"onset={self.onset_s:.3f}s, "
+                f"dur={self.duration_s:.3f}s, "
+                f"conf={mean_conf:.2f})"
+            )
         return (
-            f"NoteEvent(midi={self.midi_note}, "
+            f"NoteEvent(midi={self.midi_notes[0]}, "
             f"onset={self.onset_s:.3f}s, "
             f"dur={self.duration_s:.3f}s, "
-            f"conf={self.confidence:.2f})"
+            f"conf={mean_conf:.2f})"
         )
 
 
@@ -250,18 +278,108 @@ def _correct_octave_error(
 # Merge helper
 # ---------------------------------------------------------------------------
 
-# Maximum silence between two same-pitch events to treat as a single note.
+# Maximum silence between two same-pitch single-note events to treat as one note.
 # Spurious re-onsets caused by harmonic evolution appear within 600 ms;
-# intentional repeated notes at ≥80 BPM have gaps ≥375 ms but are typically
-# accompanied by a fresh attack, so we use a conservative 600 ms ceiling.
+# intentional repeated notes at >=80 BPM have gaps >=375 ms but are accompanied
+# by a fresh attack, so we use a conservative 600 ms ceiling.
 _MERGE_GAP_S: float = 0.600
+
+# Tighter threshold for chord events. Eighth-note strums at 100 BPM are 300 ms
+# apart and must NOT merge into one held chord.
+_MERGE_GAP_CHORD_S: float = 0.200
+
+
+def _avg_tuples(a: tuple[float, ...], b: tuple[float, ...]) -> tuple[float, ...]:
+    """Element-wise average of two parallel tuples.
+
+    Pre-condition: len(a) == len(b). Used by the merge helper after the
+    caller verifies tuple equality of midi_notes (which guarantees parallel
+    structure).
+    """
+    return tuple((x + y) / 2.0 for x, y in zip(a, b, strict=True))
+
+
+def _cluster_basic_pitch_notes(
+    bp_notes: list[BasicPitchNote],
+    window_s: float,
+    relative_floor: float,
+) -> list[list[BasicPitchNote]]:
+    """Group basic-pitch events into chord clusters by onset proximity.
+
+    Algorithm:
+    1. Sort events by start_s ascending.
+    2. Walk through; open a new cluster when the current event's start_s
+       exceeds the EARLIEST member of the current cluster by more than
+       window_s. Anchoring on the earliest member (rather than the most
+       recent) caps total cluster width.
+    3. Within each cluster, deduplicate by MIDI value (keep highest amp).
+    4. Apply relative amplitude floor: drop members whose amplitude is
+       below relative_floor * max(amps in cluster).
+    5. Sort cluster members by MIDI ascending so the resulting tuple is
+       canonical.
+
+    Parameters
+    ----------
+    bp_notes : list[BasicPitchNote]
+    window_s : float
+        Cluster window in seconds (typically 0.100).
+    relative_floor : float
+        Drop members below this fraction of the cluster's max amplitude.
+
+    Returns
+    -------
+    list[list[BasicPitchNote]]
+        One inner list per cluster, members sorted by MIDI ascending.
+        Clusters appear in onset order. Empty clusters (all members
+        dropped) are omitted.
+    """
+    if not bp_notes:
+        return []
+
+    sorted_notes = sorted(bp_notes, key=lambda n: n.start_s)
+
+    raw_clusters: list[list[BasicPitchNote]] = []
+    for note in sorted_notes:
+        if not raw_clusters or (note.start_s - raw_clusters[-1][0].start_s) > window_s:
+            raw_clusters.append([note])
+        else:
+            raw_clusters[-1].append(note)
+
+    cleaned_clusters: list[list[BasicPitchNote]] = []
+    for cluster in raw_clusters:
+        # Deduplicate by MIDI value, keeping highest amplitude
+        by_midi: dict[int, BasicPitchNote] = {}
+        for n in cluster:
+            existing = by_midi.get(n.midi)
+            if existing is None or n.amplitude > existing.amplitude:
+                by_midi[n.midi] = n
+        deduped = list(by_midi.values())
+
+        # Apply relative amplitude floor within the cluster
+        max_amp = max(n.amplitude for n in deduped)
+        threshold = max_amp * relative_floor
+        survivors = [n for n in deduped if n.amplitude >= threshold]
+
+        if not survivors:
+            continue
+        # Sort by MIDI ascending so tuples are canonical
+        survivors.sort(key=lambda n: n.midi)
+        cleaned_clusters.append(survivors)
+
+    return cleaned_clusters
 
 
 def _merge_consecutive_same_pitch(events: list[NoteEvent]) -> list[NoteEvent]:
-    """Merge back-to-back NoteEvents with identical pitch if the gap is small.
+    """Merge back-to-back NoteEvents whose midi_notes are identical.
 
-    Handles phantom re-onsets that appear when onset_detect fires on harmonic
+    Handles phantom re-onsets caused by onset_detect firing on harmonic
     evolution of a sustained note (e.g. the B3 string triggering twice).
+
+    The merge gap threshold differs by chord size:
+    - Singleton (mono) events: 600 ms — covers harmonic-evolution
+      false re-onsets on a decaying single note.
+    - Chord events: 200 ms — tighter, because eighth-note repeated chords
+      at 100 BPM are 300 ms apart and must NOT merge.
     """
     if not events:
         return events
@@ -270,15 +388,16 @@ def _merge_consecutive_same_pitch(events: list[NoteEvent]) -> list[NoteEvent]:
     for current in events[1:]:
         prev = merged[-1]
         gap = current.onset_s - prev.offset_s
-        if current.midi_note == prev.midi_note and gap <= _MERGE_GAP_S:
-            # Extend previous event to cover the full duration of both
+        same_pitches = current.midi_notes == prev.midi_notes
+        threshold = _MERGE_GAP_CHORD_S if prev.is_chord else _MERGE_GAP_S
+        if same_pitches and gap <= threshold:
             merged[-1] = NoteEvent(
                 onset_s=prev.onset_s,
                 offset_s=current.offset_s,
-                midi_note=prev.midi_note,
-                frequency_hz=(prev.frequency_hz + current.frequency_hz) / 2.0,
-                confidence=(prev.confidence + current.confidence) / 2.0,
-                cents_deviation=(prev.cents_deviation + current.cents_deviation) / 2.0,
+                midi_notes=prev.midi_notes,
+                frequencies_hz=_avg_tuples(prev.frequencies_hz, current.frequencies_hz),
+                confidences=_avg_tuples(prev.confidences, current.confidences),
+                cents_deviations=_avg_tuples(prev.cents_deviations, current.cents_deviations),
             )
         else:
             merged.append(current)
@@ -317,8 +436,12 @@ class NoteTracker:
         chunk_offset_s: float = 0.0,
         audio: np.ndarray | None = None,
     ) -> list[NoteEvent]:
-        """
-        Produce NoteEvents from a chunk's pitch + onset data.
+        """Produce NoteEvents from a chunk's pitch + onset data.
+
+        Dispatches on whether the PitchResult carries basic-pitch's pre-assembled
+        note events (`bp_notes`) or frame-level f0 data (`frames`). Phase 1
+        basic-pitch path emits one singleton NoteEvent per BasicPitchNote — chord
+        clustering will be added in Phase 2.
 
         Parameters
         ----------
@@ -333,7 +456,38 @@ class NoteTracker:
 
         Returns
         -------
-        list[NoteEvent]  — sorted by onset_s
+        list[NoteEvent]
+            Sorted by onset_s.
+        """
+        if pitch_result.bp_notes is not None:
+            return self._process_basic_pitch(pitch_result.bp_notes, chunk_offset_s)
+        return self._process_frame_based(pitch_result, onsets, chunk_offset_s, audio)
+
+    def _process_frame_based(
+        self,
+        pitch_result: PitchResult,
+        onsets: list[Onset],
+        chunk_offset_s: float = 0.0,
+        audio: np.ndarray | None = None,
+    ) -> list[NoteEvent]:
+        """Assemble NoteEvents from onset times + per-frame f0 data (pYIN/CREPE path).
+
+        This is the original monophonic pipeline logic, preserved verbatim from
+        before the basic-pitch dispatch was introduced.
+
+        Parameters
+        ----------
+        pitch_result : PitchResult
+        onsets : list[Onset]
+        chunk_offset_s : float
+            Add this to all times so they are session-absolute, not chunk-relative.
+        audio : np.ndarray | None
+            Raw audio samples for the spectral octave-error fallback.
+
+        Returns
+        -------
+        list[NoteEvent]
+            Sorted by onset_s.
         """
         if not onsets:
             return []
@@ -389,10 +543,71 @@ class NoteTracker:
             events.append(NoteEvent(
                 onset_s=t_start + chunk_offset_s,
                 offset_s=t_end + chunk_offset_s,
-                midi_note=midi_note,
-                frequency_hz=median_freq,
-                confidence=mean_conf,
-                cents_deviation=cents_dev,
+                midi_notes=(midi_note,),
+                frequencies_hz=(median_freq,),
+                confidences=(mean_conf,),
+                cents_deviations=(cents_dev,),
+            ))
+
+        sorted_events = sorted(events, key=lambda e: e.onset_s)
+        return _merge_consecutive_same_pitch(sorted_events)
+
+    def _process_basic_pitch(
+        self,
+        bp_notes: list[BasicPitchNote],
+        chunk_offset_s: float,
+    ) -> list[NoteEvent]:
+        """Convert basic-pitch's pre-assembled notes into NoteEvents, clustering
+        simultaneous detections into chord events.
+
+        Phase 2: clusters of size 1 emit singleton NoteEvents (backward-compatible
+        with Phase 1); clusters of size 2+ emit chord NoteEvents with the full
+        midi_notes tuple sorted ascending.
+
+        Clustering rule (see _cluster_basic_pitch_notes): earliest-anchor + window.
+        Cluster width is capped by ONSET_GROUPING_WINDOW_MS (100 ms default).
+        Members below POLYPHONIC_RELATIVE_FLOOR * max(amps in cluster) are dropped.
+
+        No octave-error correction is applied — basic-pitch already does its own
+        polyphonic spectral analysis (spec §3.2).
+
+        Parameters
+        ----------
+        bp_notes : list[BasicPitchNote]
+            Pre-assembled note events from basic-pitch's predict() output.
+        chunk_offset_s : float
+            Add this to all times so they are session-absolute, not chunk-relative.
+
+        Returns
+        -------
+        list[NoteEvent]
+            Sorted by onset_s.
+        """
+        if not bp_notes:
+            return []
+
+        window_s = self._config.onset_grouping_window_ms / 1000.0
+        clusters = _cluster_basic_pitch_notes(
+            bp_notes,
+            window_s=window_s,
+            relative_floor=self._config.polyphonic_relative_floor,
+        )
+
+        events: list[NoteEvent] = []
+        for cluster in clusters:
+            onset = min(n.start_s for n in cluster) + chunk_offset_s
+            offset = max(n.end_s for n in cluster) + chunk_offset_s
+            midi_notes = tuple(n.midi for n in cluster)
+            frequencies = tuple(440.0 * 2.0 ** ((n.midi - 69) / 12.0) for n in cluster)
+            confidences = tuple(n.amplitude for n in cluster)
+            cents = tuple(0.0 for _ in cluster)
+            events.append(NoteEvent(
+                onset_s=onset,
+                offset_s=offset,
+                midi_notes=midi_notes,
+                frequencies_hz=frequencies,
+                confidences=confidences,
+                cents_deviations=cents,
             ))
 
         sorted_events = sorted(events, key=lambda e: e.onset_s)

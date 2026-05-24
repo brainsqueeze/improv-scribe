@@ -28,10 +28,10 @@ def _events_at_bpm(bpm: float, n_notes: int = 8, start: float = 0.0) -> list[Not
         events.append(NoteEvent(
             onset_s=onset,
             offset_s=onset + beat_s * 0.9,
-            midi_note=60,
-            frequency_hz=261.63,
-            confidence=0.9,
-            cents_deviation=0.0,
+            midi_notes=(60,),
+            frequencies_hz=(261.63,),
+            confidences=(0.9,),
+            cents_deviations=(0.0,),
         ))
     return events
 

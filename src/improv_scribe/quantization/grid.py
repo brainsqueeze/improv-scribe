@@ -28,10 +28,11 @@ music21 uses its own quarterLength system (quarter note = 1.0). We convert:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import StrEnum
-
-import numpy as np
+from fractions import Fraction
+from math import gcd
 
 from improv_scribe.analysis.note_tracker import NoteEvent
 from improv_scribe.quantization.tempo import TempoResult
@@ -75,19 +76,43 @@ def to_quarter_length(duration: NoteDuration) -> float:
 
 @dataclass
 class QuantizedNote:
-    """A NoteEvent after rhythm quantization."""
-    midi_note: int
-    frequency_hz: float
-    confidence: float
-    cents_deviation: float
+    """A NoteEvent after rhythm quantization, chord-capable.
 
-    onset_beat: float        # beat position (quarter note = 1)
-    duration_beats: float    # duration in beats
+    Pitch fields are tuples parallel to ``midi_notes``. Singleton tuples for
+    monophonic notes, length-N tuples for chords, empty tuples for rests.
 
+    Parameters
+    ----------
+    midi_notes : tuple[int, ...]
+        MIDI notes, sorted ascending. Empty tuple for rests.
+    frequencies_hz : tuple[float, ...]
+        Parallel to midi_notes. Empty for rests.
+    confidences : tuple[float, ...]
+        Parallel to midi_notes. Empty for rests.
+    cents_deviations : tuple[float, ...]
+        Parallel to midi_notes. Empty for rests.
+    onset_beat : float
+        Beat position (quarter note = 1).
+    duration_beats : float
+        Duration in beats.
+    duration_type : NoteDuration
+        Standard music notation duration name.
+    quarter_length : float
+        music21 quarterLength.
+    is_rest : bool
+        True for inserted rest entries.
+    """
+    midi_notes: tuple[int, ...]
+    frequencies_hz: tuple[float, ...]
+    confidences: tuple[float, ...]
+    cents_deviations: tuple[float, ...]
+
+    onset_beat: float
+    duration_beats: float
     duration_type: NoteDuration
-    quarter_length: float    # music21 quarterLength
+    quarter_length: float
 
-    is_rest: bool = False    # True for inserted rest notes
+    is_rest: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -125,21 +150,46 @@ class RhythmQuantizer:
         self._time_sig = time_signature
         self._beat_duration_s = 60.0 / self._bpm  # seconds per quarter note
 
-        # Build the set of candidate durations
+        # Build the set of candidate durations (sorted ascending by duration)
         min_frac = _DURATION_FRACTIONS[smallest_duration]
-        self._candidates: list[tuple[NoteDuration, float]] = [
-            (dur, frac)
-            for dur, frac in _SORTED_DURATIONS
-            if frac >= min_frac - 1e-9 and (include_triplets or "triplet" not in dur.value)
-        ]
+        self._candidates: list[tuple[NoteDuration, float]] = sorted(
+            (
+                (dur, frac)
+                for dur, frac in _SORTED_DURATIONS
+                if frac >= min_frac - 1e-9 and (include_triplets or "triplet" not in dur.value)
+            ),
+            key=lambda dur_frac: dur_frac[1],
+        )
+
+        # Common grid: GCD of all candidate beat values. Every candidate
+        # duration is an integer multiple of this grid, so snapping both
+        # onsets and offsets to it guarantees the tiling invariant.
+        # With triplets: GCD(1/4, 1/3) = 1/12 beat ≈ 0.0833.
+        # Without triplets: GCD of regular beats = 1/4 beat = 0.25.
+        beat_fracs = [Fraction(frac).limit_denominator(48) * 4 for _, frac in self._candidates]
+        grid_frac = beat_fracs[0]
+        for bf in beat_fracs[1:]:
+            grid_frac = Fraction(gcd(grid_frac.numerator * bf.denominator,
+                                     bf.numerator * grid_frac.denominator),
+                                 grid_frac.denominator * bf.denominator)
+        self._grid_beats: float = float(grid_frac)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def quantize(self, events: list[NoteEvent]) -> list[QuantizedNote]:
-        """
-        Quantize raw NoteEvents into grid-aligned QuantizedNotes.
+        """Quantize raw NoteEvents into grid-aligned QuantizedNotes.
+
+        Phase 4 algorithm: snap both onset and offset to ``self._grid_beats``.
+        Pick the largest catalog NoteDuration that fits within the snapped
+        duration; the chosen catalog duration may be ≤ the raw snapped
+        duration (note shortens slightly to fit) but never longer (no
+        overlap). Rests fill the gap between the previous note's chosen
+        end and the next note's snapped onset using the same rule.
+
+        Tiling invariant (asserted by tests): for consecutive entries,
+        ``prev.onset_beat + prev.duration_beats <= next.onset_beat``.
 
         Parameters
         ----------
@@ -158,35 +208,51 @@ class RhythmQuantizer:
         prev_end_beat = 0.0
 
         for event in events:
-            onset_beat = self._s_to_beat(event.onset_s)
-            offset_beat = self._s_to_beat(event.offset_s)
-            raw_dur_beats = max(offset_beat - onset_beat, self._min_dur_beats())
+            snapped_onset = self._snap_to_grid(self._s_to_beat(event.onset_s))
+            # Clamp: never place a note before the previous note has ended.
+            # Round-to-nearest can push an onset backwards past prev_end_beat;
+            # in that case advance to the next grid cell at or after prev_end_beat.
+            # math.ceil is the precise semantic ("smallest grid cell >= prev_end_beat");
+            # round would also work in practice (prev_end_beat lands on a grid
+            # multiple by construction) but ceil makes the intent unambiguous.
+            if snapped_onset < prev_end_beat - 1e-9:
+                snapped_onset = (
+                    math.ceil(prev_end_beat / self._grid_beats - 1e-9) * self._grid_beats
+                )
 
-            # Snap onset to nearest grid point
-            snapped_onset = self._snap_to_grid(onset_beat)
-            snapped_dur = self._snap_duration(raw_dur_beats)
-            dur_type, dur_frac = snapped_dur
-            dur_beats = dur_frac * 4.0   # whole note = 4 beats
+            snapped_offset = self._snap_to_grid(self._s_to_beat(event.offset_s))
+            # Ensure at least one grid cell of duration
+            if snapped_offset < snapped_onset + self._grid_beats:
+                snapped_offset = snapped_onset + self._grid_beats
 
-            # Insert rest if gap from previous note
+            snapped_dur_beats = snapped_offset - snapped_onset
+            dur_type, dur_beats = self._largest_fitting_duration(snapped_dur_beats)
+            # Note's chosen end is `snapped_onset + dur_beats`. This may be
+            # ≤ snapped_offset (we shrink to a catalog value); the leftover
+            # is absorbed into the rest after this note.
+
+            note_end = snapped_onset + dur_beats
+
+            # Insert rest if there's a gap from the previous note's end
+            # to this note's snapped onset.
             gap = snapped_onset - prev_end_beat
-            if gap > self._min_dur_beats() * 0.5:
+            if gap >= self._grid_beats - 1e-9:
                 rest = self._make_rest(prev_end_beat, gap)
                 if rest is not None:
                     quantized.append(rest)
 
             quantized.append(QuantizedNote(
-                midi_note=event.midi_note,
-                frequency_hz=event.frequency_hz,
-                confidence=event.confidence,
-                cents_deviation=event.cents_deviation,
+                midi_notes=event.midi_notes,
+                frequencies_hz=event.frequencies_hz,
+                confidences=event.confidences,
+                cents_deviations=event.cents_deviations,
                 onset_beat=snapped_onset,
                 duration_beats=dur_beats,
                 duration_type=dur_type,
                 quarter_length=to_quarter_length(dur_type),
             ))
 
-            prev_end_beat = snapped_onset + dur_beats
+            prev_end_beat = note_end
 
         return quantized
 
@@ -198,38 +264,53 @@ class RhythmQuantizer:
         """Convert seconds to beat position (quarter note = 1 beat)."""
         return time_s / self._beat_duration_s
 
-    def _min_dur_beats(self) -> float:
-        """Minimum duration in beats = smallest candidate duration * 4."""
-        min_frac = min(frac for _, frac in self._candidates)
-        return min_frac * 4.0
-
     def _snap_to_grid(self, beat: float) -> float:
-        """Snap a beat position to the nearest grid point."""
-        grid_size = self._min_dur_beats()
-        return round(beat / grid_size) * grid_size
+        """Snap a beat position to the nearest ``self._grid_beats`` multiple."""
+        return round(beat / self._grid_beats) * self._grid_beats
 
-    def _snap_duration(self, raw_beats: float) -> tuple[NoteDuration, float]:
-        """Find the closest standard duration to raw_beats."""
-        raw_frac = raw_beats / 4.0   # convert beats → whole-note fraction
-        best_dur, best_frac, best_dist = self._candidates[0][0], self._candidates[0][1], np.inf
-        for dur, frac in self._candidates:
-            dist = abs(frac - raw_frac)
-            if dist < best_dist:
-                best_dur, best_frac, best_dist = dur, frac, dist
-        return best_dur, best_frac
+    def _largest_fitting_duration(
+        self, dur_beats: float
+    ) -> tuple[NoteDuration, float]:
+        """Return the largest catalog (NoteDuration, beat_value) that fits.
+
+        "Fits" means ``catalog_beat_value <= dur_beats + 1e-9``. If no catalog
+        value fits (i.e. ``dur_beats < smallest catalog``), returns the
+        smallest catalog value — this is the only case where the chosen
+        duration exceeds the requested duration (needed to avoid emitting
+        a zero-duration note, which music21 rejects).
+        """
+        # _candidates is sorted ascending by fraction.
+        # Walk descending to find the largest that fits.
+        smallest = self._candidates[0]
+        for dur, frac in reversed(self._candidates):
+            beat_value = frac * 4.0
+            if beat_value <= dur_beats + 1e-9:
+                return dur, beat_value
+        # Nothing fits — return smallest (must expand to avoid zero-duration)
+        return smallest[0], smallest[1] * 4.0
 
     def _make_rest(self, start_beat: float, gap_beats: float) -> QuantizedNote | None:
-        """Create a rest QuantizedNote for a gap between notes."""
-        dur_type, dur_frac = self._snap_duration(gap_beats / 4.0 * 4.0)
-        if _DURATION_FRACTIONS[dur_type] < self._min_dur_beats() / 4.0 - 1e-9:
+        """Create a rest QuantizedNote for a gap between notes.
+
+        Returns ``None`` if the gap is smaller than ``self._grid_beats``.
+        The rest's chosen duration is the largest catalog value that fits
+        the gap; any leftover (gap minus chosen duration) is absorbed as
+        quantization noise — the next note's snapped onset is unchanged.
+        """
+        if gap_beats < self._grid_beats - 1e-9:
+            return None
+        dur_type, dur_beats = self._largest_fitting_duration(gap_beats)
+        # If the smallest catalog value is larger than the gap, no rest fits —
+        # absorb the gap as quantization noise rather than creating an overlap.
+        if dur_beats > gap_beats + 1e-9:
             return None
         return QuantizedNote(
-            midi_note=0,
-            frequency_hz=0.0,
-            confidence=1.0,
-            cents_deviation=0.0,
+            midi_notes=(),
+            frequencies_hz=(),
+            confidences=(),
+            cents_deviations=(),
             onset_beat=start_beat,
-            duration_beats=_DURATION_FRACTIONS[dur_type] * 4.0,
+            duration_beats=dur_beats,
             duration_type=dur_type,
             quarter_length=to_quarter_length(dur_type),
             is_rest=True,

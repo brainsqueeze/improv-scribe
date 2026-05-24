@@ -2,9 +2,14 @@
 notation/tab_builder.py — Guitar/bass fret assignment via dynamic programming.
 
 Given a sequence of QuantizedNotes and an instrument, assigns each non-rest
-note a (string_idx, fret) pair that minimises total left-hand position shift
-across the phrase.  The DP transition cost is the absolute difference in fret
-number between consecutive assigned positions, summed over all transitions.
+note a tuple of (string_idx, fret) pairs that minimises total left-hand
+position shift across the phrase.
+
+Phase 2 (chord-aware): each non-rest note receives a
+``tuple[tuple[int, int], ...]`` — one ``(string_idx, fret)`` pair per chord
+member, with the no-string-conflict constraint enforced.  Mono notes get
+length-1 outer tuples, so the Phase 0 / Phase 1 DP behaviour is preserved
+bit-equivalently on monophonic input.
 """
 
 from __future__ import annotations
@@ -34,11 +39,22 @@ _TUNINGS: dict[Instrument, list[int]] = {
 # ---------------------------------------------------------------------------
 
 def get_candidates(midi_note: int, tuning: list[int]) -> list[tuple[int, int]]:
-    """
-    Return all (string_idx, fret) pairs on which *midi_note* is playable.
+    """Return all (string_idx, fret) pairs on which *midi_note* is playable.
 
     string_idx is 0-based, where 0 is the lowest string.
     Only frets in the range [0, MAX_FRET] are returned.
+
+    Parameters
+    ----------
+    midi_note : int
+        MIDI note number to find candidates for.
+    tuning : list[int]
+        MIDI numbers of open strings, low to high.
+
+    Returns
+    -------
+    list[tuple[int, int]]
+        (string_idx, fret) pairs, ordered by string ascending.
     """
     candidates: list[tuple[int, int]] = []
     for string_idx, open_midi in enumerate(tuning):
@@ -48,112 +64,214 @@ def get_candidates(midi_note: int, tuning: list[int]) -> list[tuple[int, int]]:
     return candidates
 
 
+def get_chord_shapes(
+    midi_notes: tuple[int, ...],
+    tuning: list[int],
+) -> list[tuple[tuple[int, int], ...]]:
+    """Return all (string, fret) assignments that put each chord member on a
+    distinct string.
+
+    For mono (length-1 midi_notes), returns one shape per candidate string.
+    For chord midi_notes, enumerates the Cartesian product of per-member
+    candidates and keeps only combinations where strings are pairwise distinct.
+
+    Parameters
+    ----------
+    midi_notes : tuple[int, ...]
+        MIDI note numbers, typically sorted ascending (canonical form).
+    tuning : list[int]
+        MIDI numbers of open strings, low to high.
+
+    Returns
+    -------
+    list[tuple[tuple[int, int], ...]]
+        Each inner tuple is one valid shape, sorted by string ascending.
+        Empty list if no conflict-free shape exists or any member is
+        out of range.
+    """
+    import itertools  # noqa: PLC0415
+
+    per_note_candidates = [get_candidates(m, tuning) for m in midi_notes]
+    if any(not c for c in per_note_candidates):
+        # At least one member has no candidates; no shape possible.
+        return []
+
+    shapes: list[tuple[tuple[int, int], ...]] = []
+    for combo in itertools.product(*per_note_candidates):
+        strings = [s for s, _f in combo]
+        if len(set(strings)) == len(strings):
+            # Sort by string ascending so the shape is canonical
+            shapes.append(tuple(sorted(combo, key=lambda sf: sf[0])))
+    return shapes
+
+
 def assign_frets(
     notes: list[QuantizedNote],
     instrument: Instrument,
-) -> list[tuple[int, int] | None]:
-    """
-    Assign a (string_idx, fret) pair to each note in *notes*.
+) -> list[tuple[tuple[int, int], ...] | None]:
+    """Assign chord-aware (string, fret) tuples to each note using DP.
 
-    Rests (``note.is_rest == True``) receive ``None``.
-    Notes with no playable candidates (outside instrument range) receive the
-    fallback ``(0, 0)``.
+    Each non-rest note is assigned a tuple of (string, fret) pairs — one
+    pair per chord member, with the no-string-conflict constraint
+    (members on distinct strings).
 
-    The assignment minimises ``sum(|fret[i] - fret[i-1]|)`` across consecutive
-    non-rest notes, breaking ties by preferring the lower fret.
+    Cost model
+    ----------
+    Within-shape cost: hand stretch = max(fret) - min(fret) over fretted
+                       members; open strings (fret 0) excluded; 0 for
+                       all-open shapes.
+    Transition cost:   |centroid_curr - centroid_prev| where centroid is
+                       the mean fret of fretted members in the shape;
+                       defaults to 0 if all open.
+    Tie-break:         lex (cumulative_cost, max_fret_in_shape,
+                       min_fret_in_shape). On singletons this reduces
+                       bit-equivalently to the Phase 0 single-note DP.
+
+    Rests receive None.
+
+    Fallbacks
+    ---------
+    - Shape enumeration empty (member out of range): drop offending members
+      from the highest fret down until a non-empty enumeration succeeds.
+      If even the playable subset has no conflict-free shape, return
+      ``((0, 0),)``.
+    - All members unplayable: ``((0, 0),)`` so the score still renders.
+
+    Parameters
+    ----------
+    notes : list[QuantizedNote]
+        Mixed mono and chord notes. Rests receive None.
+    instrument : Instrument
+
+    Returns
+    -------
+    list[tuple[tuple[int, int], ...] | None]
+        Parallel to *notes*. Each non-rest entry is a tuple of
+        (string, fret) pairs sorted by string ascending. Rests are None.
     """
     tuning = _TUNINGS[instrument]
-    result: list[tuple[int, int] | None] = [None] * len(notes)
+    result: list[tuple[tuple[int, int], ...] | None] = [None] * len(notes)
 
-    non_rest: list[tuple[int, QuantizedNote]] = [
-        (i, note) for i, note in enumerate(notes) if not note.is_rest
-    ]
+    # Identify non-rest indices and their shape lists
+    non_rest_indices: list[int] = []
+    shape_lists: list[list[tuple[tuple[int, int], ...]]] = []
+    for i, note in enumerate(notes):
+        if note.is_rest:
+            continue
+        non_rest_indices.append(i)
+        shapes = get_chord_shapes(note.midi_notes, tuning)
+        if not shapes:
+            shapes = _fallback_shapes(note.midi_notes, tuning)
+        shape_lists.append(shapes)
 
-    if not non_rest:
+    if not non_rest_indices:
         return result
 
-    cands: list[list[tuple[int, int]]] = []
-    for _, note in non_rest:
-        c = get_candidates(note.midi_note, tuning)
-        cands.append(c)
+    def _centroid(shape: tuple[tuple[int, int], ...]) -> float:
+        fretted = [f for _s, f in shape if f > 0]
+        return sum(fretted) / len(fretted) if fretted else 0.0
 
-    n_notes = len(non_rest)
+    def _stretch(shape: tuple[tuple[int, int], ...]) -> int:
+        fretted = [f for _s, f in shape if f > 0]
+        if not fretted:
+            return 0
+        return max(fretted) - min(fretted)
 
-    # dp[j][c] = (cost, fret) — minimum cumulative transition cost to reach
-    # candidate c at note j, with the fret at j as a tie-breaker so that when
-    # two paths have equal cost the one with the lower current fret is preferred.
-    # prev[j][c] = candidate index at the previous note on the optimal path to (j,c).
     INF = math.inf
-    dp:   list[list[tuple[float, float]]] = [[(INF, INF)] * len(cands[j]) for j in range(n_notes)]
-    prev: list[list[int]]                 = [[-1]          * len(cands[j]) for j in range(n_notes)]
+    n_pos = len(non_rest_indices)
+    # dp[j][k] = (cumulative_cost, max_fret_in_shape, min_fret_in_shape)
+    dp: list[list[tuple[float, int, int]]] = [
+        [(INF, INF, INF)] * len(shape_lists[j]) for j in range(n_pos)
+    ]
+    prev: list[list[int]] = [[-1] * len(shape_lists[j]) for j in range(n_pos)]
 
-    # Initialise first note: transition cost = 0; tie-break by own fret.
-    if cands[0]:
-        for c_idx, (_s, fret) in enumerate(cands[0]):
-            dp[0][c_idx] = (0, fret)
+    # Initialise first position: no transition cost; tie-break by (max_fret, min_fret)
+    for k, shape in enumerate(shape_lists[0]):
+        all_frets = [f for _s, f in shape]
+        dp[0][k] = (0.0, max(all_frets), min(all_frets))
 
-    # Fill DP table.
-    # When a note has no candidates we skip it and chain the *next* valid note
-    # back to the last note that did have candidates (tracked via last_valid).
-    last_valid = 0 if cands[0] else -1
-    for j in range(1, n_notes):
-        if not cands[j]:
-            # No candidates — will use fallback; do not update last_valid
-            continue
-        p = last_valid  # index of last note that had candidates
-        if p == -1:
-            # No prior note had candidates; all dp[j] stay INF
-            last_valid = j
-            continue
-        for c_idx, (_s, fret) in enumerate(cands[j]):
-            for p_idx, (_ps, p_fret) in enumerate(cands[p]):
-                if dp[p][p_idx][0] == INF:
+    for j in range(1, n_pos):
+        for k, shape in enumerate(shape_lists[j]):
+            stretch = _stretch(shape)
+            curr_cent = _centroid(shape)
+            all_frets = [f for _s, f in shape]
+            best: tuple[float, int, int] = (INF, INF, INF)
+            best_p = -1
+            for p, prev_shape in enumerate(shape_lists[j - 1]):
+                if dp[j - 1][p][0] == INF:
                     continue
-                cost = dp[p][p_idx][0] + abs(fret - p_fret)
-                candidate = (cost, fret)
-                if candidate < dp[j][c_idx]:
-                    dp[j][c_idx] = candidate
-                    prev[j][c_idx] = p_idx
-        last_valid = j
+                trans = abs(curr_cent - _centroid(prev_shape))
+                cumulative = dp[j - 1][p][0] + stretch + trans
+                cand = (cumulative, max(all_frets), min(all_frets))
+                if cand < best:
+                    best = cand
+                    best_p = p
+            dp[j][k] = best
+            prev[j][k] = best_p
 
-    # Backtrack: find the best final candidate at the last note with candidates.
-    assignments: list[int] = [-1] * n_notes
+    # Backtrack
+    final_k = min(range(len(shape_lists[-1])), key=lambda k: dp[-1][k])
+    assignments: list[int] = [-1] * n_pos
+    assignments[-1] = final_k
+    for j in range(n_pos - 1, 0, -1):
+        assignments[j - 1] = prev[j][assignments[j]]
 
-    last_with_cands = -1
-    for j in range(n_notes - 1, -1, -1):
-        if cands[j]:
-            last_with_cands = j
-            break
-
-    if last_with_cands >= 0:
-        best_c = min(
-            range(len(cands[last_with_cands])),
-            key=lambda c_idx: dp[last_with_cands][c_idx],
-        )
-        assignments[last_with_cands] = best_c
-
-        # Walk backwards, following prev links and skipping no-candidate notes.
-        j = last_with_cands - 1
-        while j >= 0:
-            if not cands[j]:
-                # No candidates — fallback; skip
-                j -= 1
-                continue
-            # Find the next note after j that has an assignment
-            nxt = j + 1
-            while nxt <= last_with_cands and not cands[nxt]:
-                nxt += 1
-            if nxt > last_with_cands or assignments[nxt] == -1:
-                assignments[j] = -1
-            else:
-                assignments[j] = prev[nxt][assignments[nxt]]
-            j -= 1
-
-    for j, (orig_idx, _note) in enumerate(non_rest):
-        c_idx = assignments[j]
-        if c_idx == -1 or not cands[j]:
-            result[orig_idx] = (0, 0)
+    for pos, j in enumerate(non_rest_indices):
+        k = assignments[pos]
+        if k == -1:
+            result[j] = ((0, 0),)
         else:
-            result[orig_idx] = cands[j][c_idx]
+            result[j] = shape_lists[pos][k]
 
     return result
+
+
+def _fallback_shapes(
+    midi_notes: tuple[int, ...],
+    tuning: list[int],
+) -> list[tuple[tuple[int, int], ...]]:
+    """When a chord has no conflict-free shape (e.g. duplicate-pitch chord),
+    drop members until a valid shape exists.
+
+    Returns at least one shape (the final fallback is ``((0, 0),)``).
+
+    Parameters
+    ----------
+    midi_notes : tuple[int, ...]
+        MIDI note numbers of the chord.
+    tuning : list[int]
+        MIDI numbers of open strings, low to high.
+
+    Returns
+    -------
+    list[tuple[tuple[int, int], ...]]
+        Non-empty list of shapes after dropping offending members.
+    """
+    for drop_count in range(1, len(midi_notes)):
+        for combo in _combinations_of_size(midi_notes, len(midi_notes) - drop_count):
+            shapes = get_chord_shapes(combo, tuning)
+            if shapes:
+                return shapes
+    return [((0, 0),)]
+
+
+def _combinations_of_size(
+    midi_notes: tuple[int, ...],
+    size: int,
+) -> list[tuple[int, ...]]:
+    """All subsets of midi_notes with the given size.
+
+    Parameters
+    ----------
+    midi_notes : tuple[int, ...]
+        Source MIDI note numbers.
+    size : int
+        Number of elements to select.
+
+    Returns
+    -------
+    list[tuple[int, ...]]
+        All combinations of the given size.
+    """
+    import itertools  # noqa: PLC0415
+    return [tuple(c) for c in itertools.combinations(midi_notes, size)]

@@ -21,6 +21,7 @@ Rule of thumb: use at least 20 full periods worth of signal.
 from __future__ import annotations
 
 import math
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -168,3 +169,160 @@ class TestPitchEstimatorPyin:
     def test_backend_name_property(self, config):
         estimator = PitchEstimator(config, backend="pyin")
         assert estimator.backend_name == "pyin"
+
+
+"""Unit tests for the basic-pitch pitch backend wrapper (Phase 1)."""
+
+
+class TestBasicPitchNote:
+    """The BasicPitchNote dataclass captures one event from basic-pitch.predict()."""
+
+    def test_construction(self):
+        from improv_scribe.analysis.pitch import BasicPitchNote
+        ev = BasicPitchNote(start_s=0.10, end_s=0.50, midi=60, amplitude=0.80)
+        assert ev.start_s == pytest.approx(0.10)
+        assert ev.end_s == pytest.approx(0.50)
+        assert ev.midi == 60
+        assert ev.amplitude == pytest.approx(0.80)
+
+    def test_duration_s_property(self):
+        from improv_scribe.analysis.pitch import BasicPitchNote
+        ev = BasicPitchNote(start_s=0.10, end_s=0.50, midi=60, amplitude=0.80)
+        assert ev.duration_s == pytest.approx(0.40)
+
+
+class TestPitchResultBpNotes:
+    """PitchResult gains an optional bp_notes field used by basic-pitch backend."""
+
+    def test_default_is_none(self):
+        result = PitchResult(frames=[], bp_notes=None, sample_rate=44100, hop_length=512)
+        assert result.bp_notes is None
+
+    def test_can_carry_bp_notes(self):
+        from improv_scribe.analysis.pitch import BasicPitchNote
+        notes = [
+            BasicPitchNote(start_s=0.0, end_s=0.5, midi=60, amplitude=0.8),
+            BasicPitchNote(start_s=0.5, end_s=1.0, midi=64, amplitude=0.7),
+        ]
+        result = PitchResult(frames=[], bp_notes=notes, sample_rate=44100, hop_length=512)
+        assert result.bp_notes is not None
+        assert len(result.bp_notes) == 2
+        assert result.bp_notes[0].midi == 60
+
+
+def _fake_predict_returns(note_events: list[tuple]) -> object:
+    """Build a fake predict() return value: (model_output, midi_data, note_events)."""
+    # model_output and midi_data are not consumed by our wrapper
+    return ({}, None, note_events)
+
+
+class TestBasicPitchBackend:
+    """The basic-pitch backend wrapper unpacks predict() and applies filtering.
+
+    All tests mock basic_pitch.inference.predict so they run without exercising
+    the real model (and without requiring basic-pitch to be installed in CI).
+    """
+
+    def _make_config(self):
+        from improv_scribe.config import AppConfig
+        return AppConfig()
+
+    def _make_profile(self):
+        from improv_scribe.analysis.instrument_profiles import Instrument, get_profile
+        return get_profile(Instrument.GUITAR)
+
+    def test_unpacks_note_events_into_bp_notes(self):
+        from improv_scribe.analysis.pitch import _BasicPitchBackend  # noqa: PLC0415
+
+        config = self._make_config()
+        # Two events comfortably above floor; one comfortably below.
+        # Use config.polyphonic_amplitude_floor so the test tracks the
+        # calibrated value rather than a hardcoded literal.
+        floor = config.polyphonic_amplitude_floor
+        fake_events = [
+            (0.10, 0.50, 60, floor + 0.15, [1, 1, 1]),   # OK
+            (0.50, 0.90, 64, floor + 0.05, [1, 1, 1]),   # OK
+            (0.90, 1.30, 67, floor - 0.20, [1, 1, 1]),   # below floor
+        ]
+        audio = np.zeros(44100, dtype=np.float32)
+
+        with patch("basic_pitch.inference.predict", return_value=_fake_predict_returns(fake_events)):
+            backend = _BasicPitchBackend()
+            result = backend.estimate(
+                audio=audio,
+                sample_rate=44100,
+                profile=self._make_profile(),
+                config=config,
+            )
+
+        assert result.bp_notes is not None
+        assert len(result.bp_notes) == 2   # third event filtered out
+        assert {n.midi for n in result.bp_notes} == {60, 64}
+        for n in result.bp_notes:
+            assert n.amplitude >= floor
+
+    def test_filters_out_of_range_notes(self):
+        from improv_scribe.analysis.pitch import _BasicPitchBackend  # noqa: PLC0415
+
+        # MIDI 20 is below guitar's midi_min=40; MIDI 110 is above midi_max=98
+        fake_events = [
+            (0.1, 0.5, 20, 0.80, [1]),    # below guitar range
+            (0.5, 0.9, 60, 0.80, [1]),    # in range
+            (0.9, 1.3, 110, 0.80, [1]),   # above guitar range
+        ]
+        audio = np.zeros(44100, dtype=np.float32)
+
+        with patch("basic_pitch.inference.predict", return_value=_fake_predict_returns(fake_events)):
+            backend = _BasicPitchBackend()
+            result = backend.estimate(
+                audio=audio,
+                sample_rate=44100,
+                profile=self._make_profile(),
+                config=self._make_config(),
+            )
+
+        assert result.bp_notes is not None
+        assert len(result.bp_notes) == 1
+        assert result.bp_notes[0].midi == 60
+
+    def test_filters_very_short_notes(self):
+        from improv_scribe.analysis.pitch import _BasicPitchBackend  # noqa: PLC0415
+
+        # min_note_duration_s default = 0.050 s
+        fake_events = [
+            (0.10, 0.13, 60, 0.80, [1]),   # 30 ms — too short
+            (0.50, 0.90, 64, 0.80, [1]),   # 400 ms — OK
+        ]
+        audio = np.zeros(44100, dtype=np.float32)
+
+        with patch("basic_pitch.inference.predict", return_value=_fake_predict_returns(fake_events)):
+            backend = _BasicPitchBackend()
+            result = backend.estimate(
+                audio=audio,
+                sample_rate=44100,
+                profile=self._make_profile(),
+                config=self._make_config(),
+            )
+
+        assert result.bp_notes is not None
+        assert len(result.bp_notes) == 1
+        assert result.bp_notes[0].midi == 64
+
+    def test_frames_is_empty_list_not_none(self):
+        """PitchResult.frames stays an empty list (not None) so existing
+        code that reads .voiced_frames or len(.frames) doesn't crash."""
+        from improv_scribe.analysis.pitch import _BasicPitchBackend  # noqa: PLC0415
+
+        audio = np.zeros(44100, dtype=np.float32)
+        with patch("basic_pitch.inference.predict", return_value=_fake_predict_returns([])):
+            backend = _BasicPitchBackend()
+            result = backend.estimate(
+                audio=audio,
+                sample_rate=44100,
+                profile=self._make_profile(),
+                config=self._make_config(),
+            )
+
+        assert result.frames == []
+        assert result.voiced_frames == []
+        assert result.bp_notes == []

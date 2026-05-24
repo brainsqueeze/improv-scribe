@@ -7,7 +7,9 @@ correctly from QuantizedNote lists.
 
 from __future__ import annotations
 
+import music21.chord
 import music21.note
+import music21.note as m21note
 import music21.stream
 import music21.tempo
 import pytest
@@ -24,10 +26,10 @@ def _make_tempo(bpm: float = 120.0) -> TempoResult:
 
 def _make_note(midi: int, quarter_length: float, beat: float = 0.0) -> QuantizedNote:
     return QuantizedNote(
-        midi_note=midi,
-        frequency_hz=261.63,
-        confidence=0.9,
-        cents_deviation=0.0,
+        midi_notes=(midi,),
+        frequencies_hz=(261.63,),
+        confidences=(0.9,),
+        cents_deviations=(0.0,),
         onset_beat=beat,
         duration_beats=quarter_length,
         duration_type=NoteDuration.QUARTER,
@@ -38,10 +40,10 @@ def _make_note(midi: int, quarter_length: float, beat: float = 0.0) -> Quantized
 
 def _make_rest(quarter_length: float, beat: float = 0.0) -> QuantizedNote:
     return QuantizedNote(
-        midi_note=0,
-        frequency_hz=0.0,
-        confidence=1.0,
-        cents_deviation=0.0,
+        midi_notes=(),
+        frequencies_hz=(),
+        confidences=(),
+        cents_deviations=(),
         onset_beat=beat,
         duration_beats=quarter_length,
         duration_type=NoteDuration.QUARTER,
@@ -189,3 +191,78 @@ class TestOctaveTransposition:
         assert len(score_notes) == 2
         assert score_notes[0].pitch.midi == 60
         assert score_notes[1].pitch.midi == 64
+
+
+class TestScoreBuilderChord:
+    """Phase 2 — ScoreBuilder emits music21.chord.Chord when QuantizedNote
+    has multiple midi_notes."""
+
+    def _profile(self):
+        from improv_scribe.analysis.instrument_profiles import Instrument, get_profile
+        return get_profile(Instrument.GUITAR)
+
+    def _tempo_result(self):
+        from improv_scribe.quantization.tempo import TempoResult
+        return TempoResult(bpm=120.0, beat_times_s=[], confidence=0.9)
+
+    def _make_qn_chord(
+        self,
+        midi_notes: tuple[int, ...] = (60, 64, 67),
+        onset_beat: float = 0.0,
+        quarter_length: float = 1.0,
+    ):
+        from improv_scribe.quantization.grid import NoteDuration, QuantizedNote
+        n = len(midi_notes)
+        return QuantizedNote(
+            midi_notes=midi_notes,
+            frequencies_hz=tuple(440.0 * 2 ** ((m - 69) / 12) for m in midi_notes),
+            confidences=(0.8,) * n,
+            cents_deviations=(0.0,) * n,
+            onset_beat=onset_beat,
+            duration_beats=quarter_length,
+            duration_type=NoteDuration.QUARTER,
+            quarter_length=quarter_length,
+            is_rest=False,
+        )
+
+    def test_singleton_qn_produces_note_not_chord(self):
+        from improv_scribe.notation.score_builder import ScoreBuilder
+        builder = ScoreBuilder(self._profile(), self._tempo_result())
+        score = builder.build([self._make_qn_chord(midi_notes=(60,))])
+        notes_and_chords = list(score.recurse().notes)
+        assert len(notes_and_chords) == 1
+        assert isinstance(notes_and_chords[0], m21note.Note)
+        assert notes_and_chords[0].pitch.midi == 60
+
+    def test_chord_qn_produces_chord(self):
+        from improv_scribe.notation.score_builder import ScoreBuilder
+        builder = ScoreBuilder(self._profile(), self._tempo_result())
+        score = builder.build([self._make_qn_chord(midi_notes=(60, 64, 67))])
+        notes_and_chords = list(score.recurse().notes)
+        assert len(notes_and_chords) == 1
+        chord = notes_and_chords[0]
+        assert isinstance(chord, music21.chord.Chord)
+        assert sorted(p.midi for p in chord.pitches) == [60, 64, 67]
+
+    def test_mixed_singletons_and_chords(self):
+        from improv_scribe.notation.score_builder import ScoreBuilder
+        builder = ScoreBuilder(self._profile(), self._tempo_result())
+        score = builder.build([
+            self._make_qn_chord(midi_notes=(60,)),
+            self._make_qn_chord(midi_notes=(64, 67)),
+            self._make_qn_chord(midi_notes=(60,)),
+        ])
+        notes_and_chords = list(score.recurse().notes)
+        assert len(notes_and_chords) == 3
+        assert isinstance(notes_and_chords[0], m21note.Note)
+        assert isinstance(notes_and_chords[1], music21.chord.Chord)
+        assert isinstance(notes_and_chords[2], m21note.Note)
+
+    def test_build_raw_also_emits_chord(self):
+        """build_raw() is used for raw-timing MIDI export; must also support chords."""
+        from improv_scribe.notation.score_builder import ScoreBuilder
+        builder = ScoreBuilder(self._profile(), self._tempo_result())
+        score = builder.build_raw([self._make_qn_chord(midi_notes=(60, 64))])
+        notes_and_chords = list(score.recurse().notes)
+        assert len(notes_and_chords) == 1
+        assert isinstance(notes_and_chords[0], music21.chord.Chord)

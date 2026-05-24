@@ -45,6 +45,19 @@ crepe = ["torchcrepe>=0.0.20", "torch>=2.1"]
 # Raw MIDI export with float-second timing
 midi-raw = ["mido>=1.3"]
 
+# Polyphonic pitch backend (Spotify's basic-pitch, ONNX runtime).
+# basic-pitch itself ships a TF base dep that has no Python 3.13 wheel; we
+# install only the transitives via this extra and add basic-pitch separately
+# via `scripts/install_basic_pitch.sh` (uses --no-deps).
+basic-pitch = [
+    "onnxruntime>=1.17",
+    "pretty-midi>=0.2.9",
+    "mir-eval>=0.6",
+    "mido>=1.3",
+    "importlib_resources>=5.0",
+    "soundfile>=0.12",   # write temp WAV for basic-pitch (numpy input unsupported)
+]
+
 dev = [
     "pytest>=8.0",
     "pytest-cov>=4.1",

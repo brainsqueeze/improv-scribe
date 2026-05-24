@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(* conda run -n * pytest *)",
+      "Bash(* conda run -n * ruff check *)",
+      "Bash(* git diff *)"
+    ],
+    "deny": [
+      "Read(.env)"
+    ]
+  },
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/allow-safe-commands.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
