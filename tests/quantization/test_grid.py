@@ -182,11 +182,11 @@ class TestQuantizerTiling:
         assert q[1].duration_beats == pytest.approx(1.0)
 
     def test_overlap_regression_dyad_sample_scenario(self):
-        # Reproduce the failing dyad-sample shape: 40 BPM tempo, onsets
-        # at irregular fractional beat positions that triggered the
-        # original §14.3 overlap bug.
-        # At 40 BPM: 1 beat = 1.5s. Onsets at 0.290s, 2.079s, 3.821s,
-        # 5.541s match the octave-dyads sample (basic-pitch output).
+        # Hand-crafted timings that reproduce the §14.3 overlap-bug shape:
+        # 40 BPM tempo + onsets at irregular fractional beat positions.
+        # At 40 BPM, 1 beat = 1.5s; these specific seconds happen to land
+        # on the kind of triplet-vs-regular-grid boundaries that exposed
+        # the original independent-snapping bug.
         events = [
             _make_event(0.290, 1.265, midi=40),
             _make_event(2.079, 3.229, midi=41),
@@ -200,6 +200,28 @@ class TestQuantizerTiling:
         for entry in q:
             ql = entry.quarter_length
             assert ql > 0, f"zero or negative quarter_length at {entry}"
+
+    def test_backward_clamp_activates_when_onsets_too_close(self):
+        # Two notes whose raw onsets are <½ grid cell apart: round-to-nearest
+        # could put the second event's snapped_onset before the first event's
+        # chosen end. The backward-clamp branch must fire to keep tiling.
+        # At 120 BPM with 1/12-beat grid (≈42 ms), pick raw seconds that
+        # differ by less than the grid cell.
+        events = [
+            _make_event(0.0, 0.05),     # very short note (clamped to 1 grid cell)
+            _make_event(0.06, 0.10),    # follows within ~½ grid cell
+        ]
+        q = self._quantize(events)
+        # Tiling must still hold (this is what the clamp ensures)
+        self._assert_tiling(q)
+        # And every onset is a grid multiple
+        for entry in q:
+            from improv_scribe.quantization.grid import RhythmQuantizer
+            grid = RhythmQuantizer(_make_tempo(120.0))._grid_beats
+            ratio = entry.onset_beat / grid
+            assert abs(ratio - round(ratio)) < 1e-6, (
+                f"onset {entry.onset_beat} not aligned to grid {grid}"
+            )
 
     def test_triplet_quarter_duration_preserved(self):
         # An event whose duration is exactly 2/3 beat at 120 BPM

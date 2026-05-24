@@ -28,6 +28,7 @@ music21 uses its own quarterLength system (quarter note = 1.0). We convert:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import StrEnum
 from fractions import Fraction
@@ -211,9 +212,12 @@ class RhythmQuantizer:
             # Clamp: never place a note before the previous note has ended.
             # Round-to-nearest can push an onset backwards past prev_end_beat;
             # in that case advance to the next grid cell at or after prev_end_beat.
+            # math.ceil is the precise semantic ("smallest grid cell >= prev_end_beat");
+            # round would also work in practice (prev_end_beat lands on a grid
+            # multiple by construction) but ceil makes the intent unambiguous.
             if snapped_onset < prev_end_beat - 1e-9:
                 snapped_onset = (
-                    round(prev_end_beat / self._grid_beats) * self._grid_beats
+                    math.ceil(prev_end_beat / self._grid_beats - 1e-9) * self._grid_beats
                 )
 
             snapped_offset = self._snap_to_grid(self._s_to_beat(event.offset_s))
