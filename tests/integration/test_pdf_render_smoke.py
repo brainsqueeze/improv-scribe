@@ -33,7 +33,10 @@ SAMPLE_PATH = SAMPLE_ROOT / "guitar" / "chords" / "6_string_electric_open_G_chor
 def test_open_g_chord_renders_to_pdf(tmp_path: Path):
     """End-to-end: sample → quantizer → ScoreBuilder → PDFExporter.
 
-    Note: tabs are intentionally skipped. Tab injection for chords is Phase 5.
+    Exercises the full notation+tab pipeline including chord-aware tab
+    injection (Phase 2 Task 10 work). The §14.3 quantizer overlap bug
+    was caught by this exact code path on chord samples, so the smoke
+    test must include tab injection to act as a regression guard.
     """
     backend = os.getenv("ATS_PITCH_BACKEND", "basic_pitch")
     if backend != "basic_pitch":
@@ -52,9 +55,16 @@ def test_open_g_chord_renders_to_pdf(tmp_path: Path):
     quantized = RhythmQuantizer(tempo).quantize(events)
     builder = ScoreBuilder(profile, tempo, title="Phase 4 smoke test")
     score = builder.build(quantized)
+    tab_assignments = builder.compute_tab_assignments(quantized)
 
     pdf_path = tmp_path / "open_G_chord.pdf"
-    out = PDFExporter(config).export(score, pdf_path)
+    out = PDFExporter(config).export(
+        score,
+        pdf_path,
+        tab_notes=quantized,
+        tab_assignments=tab_assignments,
+        tab_profile=profile,
+    )
     assert out.exists(), f"PDF was not written to {out}"
     assert out.stat().st_size > 5000, (
         f"PDF size {out.stat().st_size} bytes is suspiciously small "
