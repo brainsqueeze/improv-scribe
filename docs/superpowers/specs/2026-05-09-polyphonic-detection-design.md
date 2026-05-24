@@ -1274,3 +1274,66 @@ design choices (Cartesian-product shape enumeration, lexicographic DP
 tie-break, chord-sibling MusicXML walker, MIDI iteration over
 midi_notes) all scale without modification. This validates the design
 decisions made during Phase 2 brainstorming and review.
+
+---
+
+## 17. Phase 4 Outcome (landed 2026-05-24)
+
+Phase 4 — quantizer overlap fix + CLI backend choice — completed in 6
+task commits on `chord-detection` (`903b98a` → `12d3e40`). The phase
+delivered:
+
+- `RhythmQuantizer.quantize()` rewritten around a single fine grid
+  (`self._grid_beats`, computed as the **GCD** of all candidate
+  duration beat values — 1/12 beat with triplets, 1/16 without).
+  Both onsets and offsets snap to the grid; the chosen catalog
+  `NoteDuration` is the largest value that fits the snapped duration
+  (`_largest_fitting_duration` helper). Rests fill the inter-note gap
+  using the same rule. Two edge cases caught during implementation:
+  (a) backward onset clamping when round-to-nearest pushes onset
+  before `prev_end_beat`, (b) rest-overflow guard when the smallest
+  catalog value exceeds the gap.
+- Tiling invariant guaranteed (asserted by 5 new
+  `TestQuantizerTiling` tests): for consecutive QuantizedNote entries,
+  `prev.onset_beat + prev.duration_beats <= next.onset_beat`.
+- PDF render smoke test added (`tests/integration/test_pdf_render_smoke.py`).
+  Exercises the full notation + chord-aware tab injection pipeline on
+  the G chord sample (basic_pitch only; CREPE/pyin skip).
+- **Manual verification:** the E chord sample, which was blocked by
+  the §14.3 quantizer overlap bug pre-Phase-4, now renders to a 37 KB
+  PDF with tab injection. The §14.3 bug is resolved.
+- CLI `--backend` choices list includes `basic_pitch`. Help text
+  notes the installer-script requirement.
+
+### 17.1 Phase gate results
+
+| Backend | Result |
+|---|---|
+| `ATS_PITCH_BACKEND=basic_pitch` | **318 passed, 4 skipped** (was 312/4 — +6 new tests: 5 unit + 1 PDF smoke) |
+| `ATS_PITCH_BACKEND=crepe` | **289 passed, 33 skipped** (was 284/32 — +5 new unit pass, +1 chord-only PDF smoke skip) |
+
+### 17.2 §16.3 priority list status
+
+- ✓ #1 Quantizer overlap bug — fixed in this phase.
+- ✓ #2 CLI `--backend` missing `basic_pitch` — fixed in this phase.
+- Open: #3 Chord-recall improvement, #4 Decay-tail singleton filter,
+  #5 Chord-name detection — deferred to a future phase, scoped only
+  when there's evidence of user demand.
+
+### 17.3 Spec §14.3 status
+
+The pre-existing quantizer issue documented in §14.3 is now resolved.
+PDF rendering on chord samples works end-to-end without manual
+intervention.
+
+### 17.4 Improvement over spec
+
+The implementation departs from the spec's literal pseudocode in one
+beneficial way: the spec said `grid_beats = min(catalog beat values)`,
+but the implementation uses `GCD(catalog beat values)`. The GCD
+guarantees every catalog duration is an integer multiple of
+`grid_beats`, which is essential for the tiling invariant. Using
+minimum alone (e.g. with the triplet-eighth = 1/3 beat) would not
+guarantee this property (1/3 is not a divisor of 1/4). Both approaches
+land at 1/12 beat for the default catalog, but the GCD path is
+mathematically principled.
