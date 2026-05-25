@@ -129,6 +129,7 @@ class MainWindow(QMainWindow):
         self._transport.instrument_changed.connect(self._on_instrument_changed)
         self._transport.backend_changed.connect(self._on_backend_changed)
         self._transport.rhythm_mode_changed.connect(self._on_rhythm_mode_changed)
+        self._transport.set_backend(self._config.pitch_backend)
         root_layout.addWidget(self._transport)
 
         # Waveform + spectrogram in a vertical splitter
@@ -172,7 +173,12 @@ class MainWindow(QMainWindow):
             self._noise_gate._hold_counter = 0
 
     def _on_backend_changed(self, backend: str) -> None:
-        self._config.pitch_backend = backend.replace("pyin", "pyin").replace("crepe", "crepe")
+        self._config.pitch_backend = (
+            backend
+                .replace("pyin", "pyin")
+                .replace("crepe", "crepe")
+                .replace("basic-pitch", "basic_pitch")
+        )
 
     def _on_rhythm_mode_changed(self, mode: str) -> None:
         self._rhythm_mode = mode

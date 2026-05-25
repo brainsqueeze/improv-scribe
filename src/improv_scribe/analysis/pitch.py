@@ -356,7 +356,7 @@ class PitchEstimator:
     ----------
     config : AppConfig
     backend : str | None
-        'pyin' or 'crepe'. Defaults to config.pitch_backend.
+        'pyin', 'basic_pitch', or 'crepe'. Defaults to config.pitch_backend.
     """
 
     _BACKENDS: dict[str, type[_PitchBackend]] = {

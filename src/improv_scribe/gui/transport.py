@@ -40,7 +40,7 @@ class TransportBar(QWidget):
     export_midi_requested = pyqtSignal()
     device_changed = pyqtSignal(int)           # device index
     instrument_changed = pyqtSignal(str)       # Instrument value string
-    backend_changed = pyqtSignal(str)          # 'pyin' or 'crepe'
+    backend_changed = pyqtSignal(str)          # 'pyin' or 'crepe' or 'basic-pitch
     rhythm_mode_changed = pyqtSignal(str)      # 'auto' or 'raw'
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -74,7 +74,7 @@ class TransportBar(QWidget):
         # -- Backend --
         layout.addWidget(QLabel("Pitch:"))
         self._backend_combo = QComboBox()
-        self._backend_combo.addItems(["CREPE", "pYIN"])
+        self._backend_combo.addItems(["CREPE", "Basic-pitch", "pYIN"])
         self._backend_combo.currentTextChanged.connect(
             lambda t: self.backend_changed.emit(t.lower())
         )
@@ -171,6 +171,18 @@ class TransportBar(QWidget):
     @property
     def selected_backend(self) -> str:
         return self._backend_combo.currentText().lower()
+
+    def set_backend(self, backend: str) -> None:
+        """Set the backend combo to display *backend* (internal name).
+
+        Maps internal backend identifiers ('pyin', 'crepe', 'basic_pitch') to
+        their display labels and updates the combo. Triggers
+        ``currentTextChanged`` if the value differs from the current selection.
+        """
+        label_map = {"pyin": "pYIN", "crepe": "CREPE", "basic_pitch": "Basic-pitch"}
+        label = label_map.get(backend.lower())
+        if label is not None:
+            self._backend_combo.setCurrentText(label)
 
     @property
     def selected_rhythm_mode(self) -> str:
