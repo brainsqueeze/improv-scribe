@@ -269,6 +269,21 @@ class MainWindow(QMainWindow):
             events = tracker.process(pitch_result, onsets, audio=audio)
 
             if not events:
+                # pYIN's HMM-based voicing detector collapses on low-SNR
+                # signals (e.g. acoustic guitar via laptop mic).  Surface a
+                # more actionable message when that's likely the cause.
+                if config.pitch_backend == "pyin":
+                    voiced_count = len(pitch_result.voiced_frames)
+                    duration_s = len(audio) / config.sample_rate
+                    if voiced_count < max(10, int(duration_s)):
+                        self._signaller.processing_failed.emit(
+                            f"pYIN found only {voiced_count} voiced frames "
+                            f"over {duration_s:.1f}s. This usually means low "
+                            "signal-to-noise ratio. pYIN is best for clean "
+                            "line-in signals; switch to 'Basic-pitch' or "
+                            "'CREPE' for noisy mic input."
+                        )
+                        return
                 self._signaller.processing_failed.emit(
                     "No notes detected. Check input level and instrument selection."
                 )

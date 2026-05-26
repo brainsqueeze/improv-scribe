@@ -83,6 +83,8 @@ class PDFExporter:
         output_path = Path(output_path).with_suffix(".pdf")
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        debug_mxl = Path(tempfile.gettempdir()) / "ats_last_export.musicxml"
+
         with tempfile.TemporaryDirectory() as tmpdir:
             mxl_path = Path(tmpdir) / "score.musicxml"
             self._write_musicxml(score, mxl_path)
@@ -96,7 +98,10 @@ class PDFExporter:
 
                 inject_tab_part(mxl_path, tab_notes, tab_assignments, tab_profile)
 
-            self._run_musescore(mxl_path, output_path)
+            # Keep a copy of the MusicXML for post-mortem inspection.
+            shutil.copy2(mxl_path, debug_mxl)
+
+            self._run_musescore(mxl_path, output_path, debug_mxl)
 
         return output_path
 
@@ -108,10 +113,11 @@ class PDFExporter:
         """Serialize score to MusicXML."""
         score.write("musicxml", fp=str(path))
 
-    def _run_musescore(self, input_mxl: Path, output_pdf: Path) -> None:
+    def _run_musescore(self, input_mxl: Path, output_pdf: Path, debug_mxl: Path | None = None) -> None:
         """Invoke MuseScore CLI to convert MusicXML → PDF."""
         cmd = [
             self._mscore_path,
+            "--force",
             "--export-to", str(output_pdf),
             str(input_mxl),
         ]
@@ -132,9 +138,18 @@ class PDFExporter:
             ) from exc
 
         if result.returncode != 0:
+            # Strip Qt QML registration noise so the actual error is visible.
+            # Those warnings alone exceed the old 2000-char truncation limit.
+            filtered = "\n".join(
+                line for line in result.stderr.splitlines()
+                if not line.startswith("qt.qml.typeregistration:")
+            )
+            debug_hint = (
+                f"\nIntermediate MusicXML saved to: {debug_mxl}" if debug_mxl else ""
+            )
             raise RuntimeError(
-                f"MuseScore exited with code {result.returncode}.\n"
-                f"stderr: {result.stderr[:2000]}"
+                f"MuseScore exited with code {result.returncode}.{debug_hint}\n"
+                f"stderr: {filtered[:4000]}"
             )
 
     @staticmethod

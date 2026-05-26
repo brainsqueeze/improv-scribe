@@ -125,6 +125,27 @@ class _PYinBackend(_PitchBackend):
         import math as _math
 
         import librosa  # lazy import — keeps startup fast if unused
+        from scipy.signal import butter, sosfiltfilt
+
+        # Bandpass the audio to the instrument's pitch range before pYIN.
+        # pYIN's HMM-based voicing detector is sensitive to out-of-band
+        # noise (mains hum, AC rumble, computer-fan whine, high-frequency
+        # mic hiss).  Restricting the input to the instrument's playable
+        # band substantially improves voiced-frame yield on laptop-mic
+        # recordings.  Other backends (CREPE, basic-pitch) are neural
+        # nets robust to wide-band noise and do not need this step.
+        nyquist = sample_rate * 0.5
+        high = min(profile.freq_max_hz, nyquist * 0.95)
+        sos = butter(
+            4,
+            [profile.freq_min_hz, high],
+            btype="bandpass",
+            fs=sample_rate,
+            output="sos",
+        )
+        # sosfiltfilt's default padlen is 3 * filter_order * 2 = 24 samples.
+        if len(audio) > 32:
+            audio = sosfiltfilt(sos, audio).astype(np.float32)
 
         # pYIN requires enough samples to fit several full periods of fmin.
         # In practice, pYIN voiced probability is unreliable below ~4 periods.

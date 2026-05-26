@@ -101,6 +101,22 @@ def run(args: argparse.Namespace) -> int:
     print(f"  {len(events)} note events assembled")
 
     if not events:
+        # pYIN's HMM-based voicing detector collapses on low-SNR signals
+        # (e.g. acoustic guitar via laptop mic).  Surface a more actionable
+        # message when that's likely the cause.
+        if args.backend == "pyin":
+            voiced_count = len(pitch_result.voiced_frames)
+            duration_s = len(audio) / sr
+            if voiced_count < max(10, int(duration_s)):
+                print(
+                    f"ERROR: pYIN found only {voiced_count} voiced frames over "
+                    f"{duration_s:.1f}s. This usually means low signal-to-noise "
+                    "ratio. pYIN is best for clean line-in signals; try "
+                    "--backend basic_pitch or --backend crepe for noisy mic "
+                    "input.",
+                    file=sys.stderr,
+                )
+                return 1
         print("ERROR: No notes detected. Check --instrument and input file.", file=sys.stderr)
         return 1
 
