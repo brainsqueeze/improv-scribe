@@ -235,14 +235,14 @@ class TestBasicPitchBackend:
         from improv_scribe.analysis.pitch import _BasicPitchBackend  # noqa: PLC0415
 
         config = self._make_config()
-        # Two events comfortably above floor; one comfortably below.
-        # Use config.polyphonic_amplitude_floor so the test tracks the
-        # calibrated value rather than a hardcoded literal.
-        floor = config.polyphonic_amplitude_floor
+        # Two events comfortably above the backend pre-floor; one below.
+        # The strict (cluster-aware) amplitude filtering happens later in
+        # NoteTracker; the backend only drops information-free detections.
+        floor = config.polyphonic_pre_floor
         fake_events = [
             (0.10, 0.50, 60, floor + 0.15, [1, 1, 1]),   # OK
             (0.50, 0.90, 64, floor + 0.05, [1, 1, 1]),   # OK
-            (0.90, 1.30, 67, floor - 0.20, [1, 1, 1]),   # below floor
+            (0.90, 1.30, 67, floor - 0.10, [1, 1, 1]),   # below pre-floor
         ]
         audio = np.zeros(44100, dtype=np.float32)
 
@@ -264,11 +264,12 @@ class TestBasicPitchBackend:
     def test_filters_out_of_range_notes(self):
         from improv_scribe.analysis.pitch import _BasicPitchBackend  # noqa: PLC0415
 
-        # MIDI 20 is below guitar's midi_min=40; MIDI 110 is above midi_max=98
+        # MIDI 20 is below guitar's midi_min=40; MIDI 95 (B6) is above
+        # midi_max=86 (D6, the 22nd fret on the high E string)
         fake_events = [
             (0.1, 0.5, 20, 0.80, [1]),    # below guitar range
             (0.5, 0.9, 60, 0.80, [1]),    # in range
-            (0.9, 1.3, 110, 0.80, [1]),   # above guitar range
+            (0.9, 1.3, 95, 0.80, [1]),    # above guitar range
         ]
         audio = np.zeros(44100, dtype=np.float32)
 
@@ -307,6 +308,57 @@ class TestBasicPitchBackend:
         assert result.bp_notes is not None
         assert len(result.bp_notes) == 1
         assert result.bp_notes[0].midi == 64
+
+    def test_attack_fragment_merged_into_following_event(self):
+        """basic-pitch splits a re-articulated note into a short attack
+        fragment + the sustained event with ~0 gap; the fragment is absorbed
+        into the following event so the note keeps its true onset time."""
+        from improv_scribe.analysis.pitch import _BasicPitchBackend  # noqa: PLC0415
+
+        fake_events = [
+            (0.100, 0.240, 47, 0.62, [1]),   # 140 ms attack fragment
+            (0.240, 2.000, 47, 0.75, [1]),   # sustained note
+        ]
+        audio = np.zeros(44100, dtype=np.float32)
+
+        with patch("basic_pitch.inference.predict", return_value=_fake_predict_returns(fake_events)):
+            backend = _BasicPitchBackend()
+            result = backend.estimate(
+                audio=audio,
+                sample_rate=44100,
+                profile=self._make_profile(),
+                config=self._make_config(),
+            )
+
+        assert result.bp_notes is not None
+        assert len(result.bp_notes) == 1
+        n = result.bp_notes[0]
+        assert n.start_s == pytest.approx(0.100)
+        assert n.end_s == pytest.approx(2.000)
+        assert n.amplitude == pytest.approx(0.75)
+
+    def test_long_rearticulations_not_merged(self):
+        """Two long same-pitch events back-to-back are genuine
+        re-articulations (one per strum) and must stay separate."""
+        from improv_scribe.analysis.pitch import _BasicPitchBackend  # noqa: PLC0415
+
+        fake_events = [
+            (0.000, 2.000, 47, 0.75, [1]),
+            (2.000, 4.000, 47, 0.76, [1]),
+        ]
+        audio = np.zeros(44100, dtype=np.float32)
+
+        with patch("basic_pitch.inference.predict", return_value=_fake_predict_returns(fake_events)):
+            backend = _BasicPitchBackend()
+            result = backend.estimate(
+                audio=audio,
+                sample_rate=44100,
+                profile=self._make_profile(),
+                config=self._make_config(),
+            )
+
+        assert result.bp_notes is not None
+        assert len(result.bp_notes) == 2
 
     def test_frames_is_empty_list_not_none(self):
         """PitchResult.frames stays an empty list (not None) so existing

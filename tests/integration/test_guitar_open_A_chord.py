@@ -2,12 +2,12 @@
     samples/guitar/chords/6_string_electric_open_A_chord.mp3
 
 User strums an open A major chord (A2 E3 A3 C#4 E4)
-six times. basic-pitch detects 1-3 of 5 chord members
-per strum; C#4 and E4 (high voices) are consistently
-missed.
+six times. With cluster-aware amplitude filtering the
+pipeline recovers 5-6 members per strum, including the
+spectrally-verified low E2 the player catches
+(see docs/precision_audit_basic_pitch.md).
 
-Ground truth from spec §15.5 (recorded by the Phase 3 prerequisite probe
-on 2026-05-23).
+Ground truth re-derived 2026-06-10 after the precision audit.
 """
 
 from __future__ import annotations
@@ -29,12 +29,15 @@ _BACKEND = os.getenv("ATS_PITCH_BACKEND", "basic_pitch")
 
 EXPECTED_MIDI_TUPLES_BY_BACKEND: dict[str, list[tuple[int, ...]]] = {
     "basic_pitch": [
-        (57,),            # A3 only
-        (45,),            # A2 only
-        (45, 52),         # A2 + E3
-        (45, 52, 57),     # A2 + E3 + A3 (best detection)
-        (45, 52),         # A2 + E3
-        (40,),            # E2 only (decay tail, 0.4s — spec §15.5)
+        # E2 (40) is spectrally verified as physically sounding in every
+        # strum (the player catches the low E string); E4 falls below the
+        # relative floor on 4 of 6 strums (raw amp 0.34-0.42).
+        (40, 45, 52, 57, 61),
+        (40, 45, 52, 57, 61),
+        (40, 45, 52, 57, 61, 64),
+        (40, 45, 52, 57, 61),
+        (40, 45, 52, 57, 61, 64),
+        (40, 61),         # final partial strum near end of file
     ],
     "crepe": [],
     "pyin":  [],

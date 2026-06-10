@@ -1,6 +1,10 @@
 .DS_Store
 .claude/settings.local.json
 
+*.musicxml
+*.pdf
+!docs/*.pdf
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

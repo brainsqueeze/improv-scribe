@@ -218,17 +218,31 @@ class TestNoteTrackerBasicPitch:
         result = _bp_pitch_result([
             BasicPitchNote(start_s=0.10, end_s=0.50, midi=60, amplitude=0.80),
             BasicPitchNote(start_s=0.50, end_s=0.90, midi=64, amplitude=0.70),
-            BasicPitchNote(start_s=0.90, end_s=1.30, midi=67, amplitude=0.60),
+            BasicPitchNote(start_s=0.90, end_s=1.30, midi=67, amplitude=0.68),
         ])
         events = tracker.process(result, onsets=[])
         assert len(events) == 3
         assert [tuple(e.midi_notes) for e in events] == [(60,), (64,), (67,)]
 
+    def test_weak_singleton_dropped_by_amplitude_floor(self):
+        """An isolated detection below POLYPHONIC_AMPLITUDE_FLOOR is a ghost
+        re-detection of a ringing string, not a played note."""
+        config = self._config()
+        tracker = NoteTracker(config, self._profile())
+        result = _bp_pitch_result([
+            BasicPitchNote(
+                start_s=0.10, end_s=0.50, midi=60,
+                amplitude=config.polyphonic_amplitude_floor - 0.05,
+            ),
+        ])
+        events = tracker.process(result, onsets=[])
+        assert events == []
+
     def test_events_sorted_by_onset(self):
         """basic-pitch can emit events out of time order — NoteTracker sorts."""
         tracker = NoteTracker(self._config(), self._profile())
         result = _bp_pitch_result([
-            BasicPitchNote(start_s=0.90, end_s=1.30, midi=67, amplitude=0.6),
+            BasicPitchNote(start_s=0.90, end_s=1.30, midi=67, amplitude=0.68),
             BasicPitchNote(start_s=0.10, end_s=0.50, midi=60, amplitude=0.8),
             BasicPitchNote(start_s=0.50, end_s=0.90, midi=64, amplitude=0.7),
         ])
@@ -259,7 +273,7 @@ class TestNoteTrackerBasicPitchClustering:
 
     Clustering rule: a new cluster opens when current.start_s exceeds the
     earliest member of the cluster currently being built by more than the
-    ONSET_GROUPING_WINDOW_MS (default 100 ms).
+    ONSET_GROUPING_WINDOW_MS (default 250 ms).
 
     Cluster members are sorted by midi ascending; duplicate MIDI within a
     cluster keep the highest-amplitude detection (basic-pitch can emit two
@@ -293,11 +307,12 @@ class TestNoteTrackerBasicPitchClustering:
         assert e.confidences == (pytest.approx(0.66), pytest.approx(0.78))
 
     def test_events_outside_window_become_separate_events(self):
-        """Two events 200 ms apart -> two separate singleton NoteEvents."""
+        """Two events 300 ms apart (past the 250 ms window) -> two separate
+        singleton NoteEvents."""
         tracker = NoteTracker(self._config(), self._profile())
         result = _bp_pitch_result([
-            BasicPitchNote(start_s=0.000, end_s=0.500, midi=40, amplitude=0.80),
-            BasicPitchNote(start_s=0.200, end_s=0.700, midi=52, amplitude=0.75),
+            BasicPitchNote(start_s=0.000, end_s=0.250, midi=40, amplitude=0.80),
+            BasicPitchNote(start_s=0.300, end_s=0.800, midi=52, amplitude=0.75),
         ])
         events = tracker.process(result, onsets=[])
         assert len(events) == 2
@@ -318,13 +333,13 @@ class TestNoteTrackerBasicPitchClustering:
         assert events[0].midi_notes == (40, 52)   # not (52, 40)
 
     def test_earliest_anchor_caps_cluster_width(self):
-        """Anchor is 0.000, window is 100ms. Event at 0.080 joins (80ms < 100ms).
-        Event at 0.140 starts a NEW cluster (140ms - 0ms > 100ms)."""
+        """Anchor is 0.000, window is 250ms. Event at 0.200 joins (200ms < 250ms).
+        Event at 0.350 starts a NEW cluster (350ms - 0ms > 250ms)."""
         tracker = NoteTracker(self._config(), self._profile())
         result = _bp_pitch_result([
             BasicPitchNote(start_s=0.000, end_s=1.000, midi=40, amplitude=0.70),
-            BasicPitchNote(start_s=0.080, end_s=1.000, midi=47, amplitude=0.70),
-            BasicPitchNote(start_s=0.140, end_s=1.000, midi=52, amplitude=0.70),
+            BasicPitchNote(start_s=0.200, end_s=1.000, midi=47, amplitude=0.70),
+            BasicPitchNote(start_s=0.350, end_s=1.000, midi=52, amplitude=0.70),
         ])
         events = tracker.process(result, onsets=[])
         assert len(events) == 2
@@ -384,6 +399,78 @@ class TestNoteTrackerBasicPitchClustering:
         events = tracker.process(result, onsets=[])
         assert len(events) == 1
         assert events[0].midi_notes == (40,)
+
+    def test_ring_over_member_suppressed(self):
+        """A weak non-max cluster member whose pitch was recently detected at
+        much higher amplitude is a re-detection of a still-ringing string and
+        is dropped from the chord (RING_SUPPRESSION_RATIO, default 0.6)."""
+        tracker = NoteTracker(self._config(), self._profile())
+        result = _bp_pitch_result([
+            # Strong E2 note rings from 0.0 onwards.
+            BasicPitchNote(start_s=0.000, end_s=2.000, midi=40, amplitude=0.80),
+            # Next pluck at 2.1s: D3 plus a weak E2 re-detection
+            # (0.42 < 0.6 * 0.80 = 0.48 -> suppressed).
+            BasicPitchNote(start_s=2.100, end_s=3.000, midi=50, amplitude=0.78),
+            BasicPitchNote(start_s=2.150, end_s=2.900, midi=40, amplitude=0.42),
+        ])
+        events = tracker.process(result, onsets=[])
+        assert [tuple(e.midi_notes) for e in events] == [(40,), (50,)]
+
+    def test_restruck_chord_member_not_suppressed(self):
+        """A chord member re-struck at comparable amplitude (>= 0.6 of its
+        ring-chain max) is a genuine new note and survives."""
+        tracker = NoteTracker(self._config(), self._profile())
+        result = _bp_pitch_result([
+            BasicPitchNote(start_s=0.000, end_s=1.800, midi=40, amplitude=0.80),
+            BasicPitchNote(start_s=0.010, end_s=1.800, midi=47, amplitude=0.70),
+            # Second strum 2.1s later (past the 200 ms chord merge gap),
+            # both members at similar amplitude.
+            BasicPitchNote(start_s=2.100, end_s=3.800, midi=40, amplitude=0.75),
+            BasicPitchNote(start_s=2.110, end_s=3.800, midi=47, amplitude=0.65),
+        ])
+        events = tracker.process(result, onsets=[])
+        assert [tuple(e.midi_notes) for e in events] == [(40, 47), (40, 47)]
+
+    def test_bass_max_polyphony_keeps_strongest_member(self):
+        """Bass profile is monophonic (max_polyphony=1): a cluster keeps only
+        its highest-amplitude member."""
+        tracker = NoteTracker(self._config(), get_profile(Instrument.BASS))
+        result = _bp_pitch_result([
+            BasicPitchNote(start_s=0.000, end_s=1.500, midi=38, amplitude=0.78),
+            BasicPitchNote(start_s=0.080, end_s=1.200, midi=28, amplitude=0.62),
+        ])
+        events = tracker.process(result, onsets=[])
+        assert len(events) == 1
+        assert events[0].midi_notes == (38,)
+
+    def test_weak_cluster_requires_onset_alignment(self):
+        """When onsets are supplied, a weak cluster (max amp below the
+        singleton floor) far from any onset is gated away; the same cluster
+        aligned with an onset survives."""
+        tracker = NoteTracker(self._config(), self._profile())
+        notes = [
+            BasicPitchNote(start_s=1.000, end_s=1.800, midi=40, amplitude=0.55),
+            BasicPitchNote(start_s=1.020, end_s=1.700, midi=47, amplitude=0.50),
+        ]
+        # No onset anywhere near 1.0s -> gated.
+        far_onsets = [Onset(time_s=0.0, strength=1.0)]
+        assert tracker.process(_bp_pitch_result(notes), onsets=far_onsets) == []
+        # Onset at the cluster anchor -> kept.
+        near_onsets = [Onset(time_s=1.0, strength=1.0)]
+        events = tracker.process(_bp_pitch_result(notes), onsets=near_onsets)
+        assert [tuple(e.midi_notes) for e in events] == [(40, 47)]
+
+    def test_strong_cluster_exempt_from_onset_gate(self):
+        """A cluster whose max amplitude clears the singleton floor does not
+        need onset corroboration (librosa misses some genuine strums)."""
+        tracker = NoteTracker(self._config(), self._profile())
+        notes = [
+            BasicPitchNote(start_s=1.000, end_s=1.800, midi=40, amplitude=0.80),
+            BasicPitchNote(start_s=1.020, end_s=1.700, midi=47, amplitude=0.55),
+        ]
+        far_onsets = [Onset(time_s=0.0, strength=1.0)]
+        events = tracker.process(_bp_pitch_result(notes), onsets=far_onsets)
+        assert [tuple(e.midi_notes) for e in events] == [(40, 47)]
 
     def test_chord_clusters_in_temporal_order(self):
         """Multiple chord clusters across the timeline emerge sorted by onset_s."""

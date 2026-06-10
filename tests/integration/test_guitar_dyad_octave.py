@@ -1,10 +1,10 @@
 """End-to-end pipeline regression tests for:
     samples/guitar/chords/6_string_electric_octave_dyads.mp3
 
-Six dyads — basic-pitch detects 3 as dyads, 3 as singletons (one octave
-member registers below the 0.65 amplitude floor). See spec §13.5 for the
-exact captured ground truth (validated against the live Phase 2 pipeline
-in Task 14).
+Six octave dyads — all six detected as full dyads with cluster-aware
+amplitude filtering (docs/precision_audit_basic_pitch.md).
+
+Ground truth re-derived 2026-06-10 after the precision audit.
 """
 
 from __future__ import annotations
@@ -33,10 +33,10 @@ EXPECTED_MIDI_TUPLES_BY_BACKEND: dict[str, list[tuple[int, ...]]] = {
     "basic_pitch": [
         (40, 52),   # E2+E3
         (41, 53),   # F2+F3
-        (55,),      # G3 only
-        (45,),      # A2 only
+        (43, 55),   # G2+G3
+        (45, 57),   # A2+A3
         (47, 59),   # B2+B3
-        (48,),      # C3 only
+        (48, 60),   # C3+C4
     ],
     # CREPE/pyin are monophonic — they produce singleton events. Skip-listed
     # (calibration not blocking Phase 2; can fill in post-merge).

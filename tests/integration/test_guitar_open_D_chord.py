@@ -1,14 +1,13 @@
 """End-to-end pipeline regression test for:
     samples/guitar/chords/6_string_electric_open_D_chord.mp3
 
-User strums an open D major chord (D3 A3 D4 F#4)
-five times. basic-pitch detects 2-3 of 4 chord members
-per strum. The A2 detections are sympathetic resonance
-from the open A string (basic-pitch reads the harmonic
-of A3 as an additional A2 voice).
+User strums an open D major chord (D3 A3 D4 F#4) five times. With
+cluster-aware amplitude filtering the pipeline recovers the full chord on
+every strum. A2 is spectrally verified as physically sounding (8-21 % of
+total signal energy — the open A string is included in the strum), so the
+detected voicing is x00232 (see docs/precision_audit_basic_pitch.md).
 
-Ground truth from spec §15.5 (recorded by the Phase 3 prerequisite probe
-on 2026-05-23).
+Ground truth re-derived 2026-06-10 after the precision audit.
 """
 
 from __future__ import annotations
@@ -30,11 +29,15 @@ _BACKEND = os.getenv("ATS_PITCH_BACKEND", "basic_pitch")
 
 EXPECTED_MIDI_TUPLES_BY_BACKEND: dict[str, list[tuple[int, ...]]] = {
     "basic_pitch": [
-        (45, 50),         # A2 + D3 (A2 is sympathetic of A3)
-        (50, 57, 66),     # D3 + A3 + F#4 (best detection)
-        (45, 50),         # A2 + D3
-        (45, 66),         # A2 + F#4
-        (62,),            # D4 only (decay tail)
+        # A2 (45) is spectrally verified as physically sounding in every
+        # strum (open A string included in the strum), so the detected
+        # voicing is x00232. The first strum also carries a weak E2.
+        (40, 45, 50, 57, 62, 66),
+        (45, 50, 57, 62, 66),
+        (45, 50, 57, 62, 66),
+        (45, 50, 57, 62, 66),
+        (45, 50, 57, 62, 66),
+        (62,),            # D4 re-articulation at the decay tail
     ],
     "crepe": [],
     "pyin":  [],

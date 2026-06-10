@@ -43,6 +43,12 @@ class InstrumentProfile:
     # Set transpose_semitones=-12 to write in the traditional guitar octave.
     transpose_semitones: int
 
+    # Maximum simultaneous notes emitted per chord cluster on the
+    # basic-pitch path. Bass is monophonic in the MVP scope: its long-ringing
+    # strings produce strong (amp ≥ 0.6) octave/unison re-detections during
+    # later notes that would otherwise form false dyads.
+    max_polyphony: int = 6
+
     # Noise gate RMS override (None → use global config default)
     noise_gate_rms_override: float | None = None
 
@@ -54,9 +60,11 @@ PROFILES: dict[Instrument, InstrumentProfile] = {
         freq_min_hz=73.42,    # D2 — 2 semitones below E2 for CREPE headroom
         freq_max_hz=1174.66,  # D6
         midi_min=40,          # E2 (sounding)
-        midi_max=98,          # D6 (sounding)
+        midi_max=86,          # D6 (sounding) — matches freq_max_hz and the
+                              # 22nd fret on the high E string (64 + 22)
         clef="treble8vb",     # 8vb treble: written an octave above sounding pitch
         transpose_semitones=-12,
+        max_polyphony=6,
     ),
     Instrument.BASS: InstrumentProfile(
         name="Bass Guitar (standard scale)",
@@ -67,6 +75,7 @@ PROFILES: dict[Instrument, InstrumentProfile] = {
         midi_max=62,          # D4 (sounding)
         clef="bass8vb",       # 8vb bass: written an octave above sounding pitch
         transpose_semitones=-12,
+        max_polyphony=1,      # monophonic MVP scope (see field docstring)
         noise_gate_rms_override=0.015,
     ),
 }

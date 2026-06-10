@@ -1,15 +1,13 @@
 """End-to-end pipeline regression test for:
     samples/guitar/chords/6_string_electric_open_C_chord.mp3
 
-User strums an open C major chord (C3 E3 G3 C4 E4)
-six times. basic-pitch detects 2-3 of 5 chord members
-per strum; high voices (C4 sometimes, E4 always)
-drop out. Cluster 2 includes an unexpected E2 (likely
-sympathetic of E3 / E string ringing); spec §15.5
-notes this.
+User strums an open C major chord five times. With cluster-aware
+amplitude filtering the pipeline recovers the full chord on every strum.
+E2 is spectrally verified as physically sounding (the player catches the
+low E string), so the detected voicing is 032010 rather than x32010
+(see docs/precision_audit_basic_pitch.md).
 
-Ground truth from spec §15.5 (recorded by the Phase 3 prerequisite probe
-on 2026-05-23).
+Ground truth re-derived 2026-06-10 after the precision audit.
 """
 
 from __future__ import annotations
@@ -31,12 +29,14 @@ _BACKEND = os.getenv("ATS_PITCH_BACKEND", "basic_pitch")
 
 EXPECTED_MIDI_TUPLES_BY_BACKEND: dict[str, list[tuple[int, ...]]] = {
     "basic_pitch": [
-        (48, 52, 55),     # C3 + E3 + G3
-        (40, 48, 55),     # E2 + C3 + G3 (E2 unexpected; sympathetic)
-        (48, 55, 60),     # C3 + G3 + C4
-        (48, 60),         # C3 + C4
-        (48, 55),         # C3 + G3
-        (48, 52),         # C3 + E3 (fragmented from previous strum)
+        # Full chord on all five strums. E2 (40) is spectrally verified as
+        # physically sounding (the player catches the low E string), so the
+        # detected voicing is 032010 rather than x32010.
+        (40, 48, 52, 55, 60, 64),
+        (40, 48, 52, 55, 60, 64),
+        (40, 48, 52, 55, 60, 64),
+        (40, 48, 52, 55, 60, 64),
+        (40, 48, 52, 55, 60, 64),
     ],
     "crepe": [],
     "pyin":  [],

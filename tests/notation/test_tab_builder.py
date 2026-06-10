@@ -212,33 +212,33 @@ class TestAssignFrets:
     # Issue 1 regression — DP initialisation must not include fret cost
     # -----------------------------------------------------------------------
 
-    def test_zero_shift_path_beats_low_fret_start(self):
+    def test_open_string_start_beats_high_position_shift(self):
         """
-        Regression test for the dp[0] initialisation bug.
+        Regression test for the dp[0] initialisation bug, updated for the
+        open-string-aware cost model.
 
-        The objective is sum(|fret[i] - fret[i-1]|); the fret value of the
-        FIRST note must NOT contribute to the DP cost.
+        The fret value of the first note must NOT contribute a full per-fret
+        cost to the DP — only the tiny _POSITION_EPS preference.
 
         Counter-example:
           Note 0: MIDI 50 — guitar candidates (0,10),(1,5),(2,0)
           Note 1: MIDI 60 — guitar candidates (0,20),(1,15),(2,10),(3,5),(4,1)
 
-          Path A: note0=(0,10), note1=(2,10) — shift = |10-10| = 0
-          Path B: note0=(2,0),  note1=(4,1)  — shift = |1-0|   = 1
+          Path A: note0=(0,10), note1=(2,10) — no shift, parked at fret 10
+          Path B: note0=(2,0),  note1=(4,1)  — open D string, then fret 1
 
-        True minimum-shift path is A (shift 0).
+        Transitions to/from all-open shapes are free (open strings need no
+        hand position), so path B costs only the epsilon position preference
+        and wins — it is also what a guitarist would play.
+
+        The original bug this guards against: dp[0] charging the first
+        note's full fret value as cost, which distorted every path. Under
+        that bug, fret-10 candidates would never be reachable even when a
+        later phrase demands them.
         """
         notes = [_make_note(50), _make_note(60)]
         result = assign_frets(notes, Instrument.GUITAR)
-        assert result[0] is not None
-        assert result[1] is not None
-        fret0 = result[0][0][1]
-        fret1 = result[1][0][1]
-        assert abs(fret1 - fret0) == 0, (
-            f"Expected zero-shift path, got fret0={fret0}, fret1={fret1}, "
-            f"shift={abs(fret1-fret0)}. "
-            f"Old (buggy) code would pick fret0=0,fret1=1 (shift=1)."
-        )
+        assert result == [((2, 0),), ((4, 1),)]
 
     # -----------------------------------------------------------------------
     # Issue 2 regression — mid-sequence no-candidate note must not cascade

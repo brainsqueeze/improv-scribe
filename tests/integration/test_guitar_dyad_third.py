@@ -1,10 +1,11 @@
 """End-to-end pipeline regression tests for:
     samples/guitar/chords/6_string_electric_major_thirds.mp3
 
-Six major-third intervals across 5-4 and 4-3 string pairs — basic-pitch
-detects 4 as dyads, 2 as singletons (one member of the third registers below
-the 0.65 amplitude floor). See spec §13.5 for the exact captured ground truth
-(validated against the live Phase 2 pipeline in Task 14).
+Six major-third intervals across 5-4 and 4-3 string pairs — all six
+detected as full dyads with cluster-aware amplitude filtering
+(docs/precision_audit_basic_pitch.md).
+
+Ground truth re-derived 2026-06-10 after the precision audit.
 """
 
 from __future__ import annotations
@@ -31,12 +32,12 @@ _BACKEND = os.getenv("ATS_PITCH_BACKEND", "basic_pitch")
 # in Task 15; for now, basic_pitch ground truth is what matters.
 EXPECTED_MIDI_TUPLES_BY_BACKEND: dict[str, list[tuple[int, ...]]] = {
     "basic_pitch": [
-        (50, 54),    # D3+F#3  (5-4 string pair)
-        (52,),       # E3 only
-        (54, 58),    # F#3+A#3 (5-4 string pair)
-        (55,),       # G3 only
-        (57, 61),    # A3+C#4  (4-3 string pair)
-        (59, 63),    # B3+D#4  (4-3 string pair)
+        (50, 54),    # D3+F#3
+        (52, 56),    # E3+G#3
+        (54, 58),    # F#3+A#3
+        (55, 59),    # G3+B3
+        (57, 61),    # A3+C#4
+        (59, 63),    # B3+D#4
     ],
     # CREPE/pyin are monophonic — they produce singleton events. Skip-listed
     # (calibration not blocking Phase 2; can fill in post-merge).

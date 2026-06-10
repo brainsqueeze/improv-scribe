@@ -1,10 +1,11 @@
 """End-to-end pipeline regression tests for:
     samples/guitar/chords/6_string_electric_perfect_fifths.mp3
 
-Six perfect-fifth intervals — basic-pitch detects 3 as dyads, 3 as singletons
-(one member of the fifth registers below the 0.65 amplitude floor). See spec
-§13.5 for the exact captured ground truth (validated against the live Phase 2
-pipeline in Task 14).
+Six perfect-fifth intervals — all six detected as dyads with cluster-aware
+amplitude filtering (docs/precision_audit_basic_pitch.md). The first attack
+additionally carries an octave-harmonic double (known limitation).
+
+Ground truth re-derived 2026-06-10 after the precision audit.
 """
 
 from __future__ import annotations
@@ -31,12 +32,13 @@ _BACKEND = os.getenv("ATS_PITCH_BACKEND", "basic_pitch")
 # in Task 15; for now, basic_pitch ground truth is what matters.
 EXPECTED_MIDI_TUPLES_BY_BACKEND: dict[str, list[tuple[int, ...]]] = {
     "basic_pitch": [
-        (47,),       # B2 only
-        (41, 48),    # F2+C3
-        (50,),       # D3 only
-        (45, 52),    # A2+E3
-        (47,),       # B2 only
-        (48, 55),    # C3+G3
+        (40, 47, 52),  # E2+B2 (+E3 octave-harmonic double at file start —
+                       # known limitation on the first attack)
+        (41, 48),      # F2+C3
+        (43, 50),      # G2+D3
+        (45, 52),      # A2+E3
+        (47, 54),      # B2+F#3
+        (48, 55),      # C3+G3
     ],
     # CREPE/pyin are monophonic — they produce singleton events. Skip-listed
     # (calibration not blocking Phase 2; can fill in post-merge).

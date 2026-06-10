@@ -2,13 +2,11 @@
     samples/guitar/chords/6_string_electric_open_E_chord.mp3
 
 User strums an open E major chord (E2 B2 E3 G#3 B3 E4)
-five times over ~12.3 seconds. basic-pitch detects
-2-3 of 6 chord members per strum; the high voices
-(E3, B3, E4) consistently fall below the 0.65
-amplitude floor. See spec §15.2 for recall analysis.
+five times over ~12.3 seconds. With cluster-aware amplitude
+filtering the pipeline recovers the full 6-note chord on
+3 of 5 strums (see docs/precision_audit_basic_pitch.md).
 
-Ground truth from spec §15.5 (recorded by the Phase 3 prerequisite probe
-on 2026-05-23).
+Ground truth re-derived 2026-06-10 after the precision audit.
 """
 
 from __future__ import annotations
@@ -30,11 +28,12 @@ _BACKEND = os.getenv("ATS_PITCH_BACKEND", "basic_pitch")
 
 EXPECTED_MIDI_TUPLES_BY_BACKEND: dict[str, list[tuple[int, ...]]] = {
     "basic_pitch": [
-        (47, 56),       # B2 + G#3
-        (40, 47, 56),   # E2 + B2 + G#3 (best detection)
-        (47,),          # B2 only (decay fragmentation)
-        (40, 47),       # E2 + B2
-        (47, 56),       # B2 + G#3
+        (40, 47, 52, 56, 59, 64),   # full open E chord
+        (40, 47, 56, 59),           # E3/E4 emitted late, miss the cluster window
+        (40, 47, 52, 56, 59, 64),   # full open E chord
+        (40, 47, 52, 56, 59, 64),   # full open E chord
+        (50, 56),                   # decay-tail cluster (known limitation:
+                                    # aligns with a spurious librosa onset)
     ],
     "crepe": [],
     "pyin":  [],

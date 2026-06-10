@@ -2,13 +2,12 @@
     samples/guitar/chords/6_string_electric_open_G_chord.mp3
 
 User strums an open G major chord (G2 B2 D3 G3 B3 G4)
-five times. The best detection rate across all five
-Phase 3 samples — strums 1 and 5 detect 4 of 6
-members (G2 + B2 + D3 + G3). B3 and G4 (high voices)
-are missed.
+five times. With cluster-aware amplitude filtering the
+pipeline recovers 5-6 of 6 members per strum; G4 is
+emitted late by the model on strums 1/3/5 and misses
+the cluster window (see docs/precision_audit_basic_pitch.md).
 
-Ground truth from spec §15.5 (recorded by the Phase 3 prerequisite probe
-on 2026-05-23).
+Ground truth re-derived 2026-06-10 after the precision audit.
 """
 
 from __future__ import annotations
@@ -30,11 +29,13 @@ _BACKEND = os.getenv("ATS_PITCH_BACKEND", "basic_pitch")
 
 EXPECTED_MIDI_TUPLES_BY_BACKEND: dict[str, list[tuple[int, ...]]] = {
     "basic_pitch": [
-        (43, 47, 50, 55),   # G2 + B2 + D3 + G3 (4-member, best)
-        (47, 50, 55),       # B2 + D3 + G3
-        (50, 55, 59),       # D3 + G3 + B3
-        (47, 50),           # B2 + D3
-        (43, 47, 50, 55),   # G2 + B2 + D3 + G3 again
+        # 5-6 of 6 members per strum; G4 (67) is emitted late by the model
+        # on strums 1/3/5 and misses the cluster window.
+        (43, 47, 50, 55, 59),
+        (43, 47, 50, 55, 59, 67),
+        (43, 47, 50, 55, 59),
+        (43, 47, 50, 55, 59, 67),
+        (43, 47, 50, 55, 59),
     ],
     "crepe": [],
     "pyin":  [],

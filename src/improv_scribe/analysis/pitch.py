@@ -284,6 +284,74 @@ class _CrepeBackend(_PitchBackend):
 # basic-pitch backend
 # ---------------------------------------------------------------------------
 
+def _merge_attack_fragments(
+    notes: list[BasicPitchNote],
+    max_fragment_s: float,
+    max_gap_s: float,
+) -> list[BasicPitchNote]:
+    """Absorb short same-pitch attack fragments into the adjacent event.
+
+    basic-pitch frequently splits one re-articulated note into a short
+    (< ~180 ms) attack fragment followed by the sustained event with ~0 gap.
+    A fragment is merged into the same-pitch event that *follows* it when the
+    gap is small (the fragment is the attack of that re-articulation); if no
+    event follows, it is merged into the preceding event (decay tail).  Two
+    long events are never merged — those are genuine re-articulations and must
+    stay separate so each strum keeps its own onset.
+
+    Parameters
+    ----------
+    notes : list[BasicPitchNote]
+        Raw events from basic-pitch, any order.
+    max_fragment_s : float
+        Events shorter than this are treated as fragments.
+    max_gap_s : float
+        Maximum gap between fragment and neighbour for absorption.
+
+    Returns
+    -------
+    list[BasicPitchNote]
+        Merged events sorted by start_s.
+    """
+    by_midi: dict[int, list[BasicPitchNote]] = {}
+    for n in notes:
+        by_midi.setdefault(n.midi, []).append(n)
+
+    out: list[BasicPitchNote] = []
+    for midi, group in by_midi.items():
+        group.sort(key=lambda n: n.start_s)
+        merged: list[BasicPitchNote] = []
+        i = 0
+        while i < len(group):
+            cur = group[i]
+            is_fragment = cur.duration_s < max_fragment_s
+            if is_fragment and i + 1 < len(group) \
+                    and group[i + 1].start_s - cur.end_s <= max_gap_s:
+                nxt = group[i + 1]
+                merged.append(BasicPitchNote(
+                    start_s=cur.start_s,
+                    end_s=nxt.end_s,
+                    midi=midi,
+                    amplitude=max(cur.amplitude, nxt.amplitude),
+                ))
+                i += 2
+            elif is_fragment and merged \
+                    and cur.start_s - merged[-1].end_s <= max_gap_s:
+                prev = merged[-1]
+                merged[-1] = BasicPitchNote(
+                    start_s=prev.start_s,
+                    end_s=cur.end_s,
+                    midi=midi,
+                    amplitude=max(prev.amplitude, cur.amplitude),
+                )
+                i += 1
+            else:
+                merged.append(cur)
+                i += 1
+        out.extend(merged)
+    return sorted(out, key=lambda n: n.start_s)
+
+
 class _BasicPitchBackend(_PitchBackend):
     """
     Wraps Spotify's `basic-pitch` polyphonic pitch detection model.
@@ -291,18 +359,22 @@ class _BasicPitchBackend(_PitchBackend):
     basic-pitch ships an ONNX model that handles arbitrary polyphony. The
     wrapper writes the input audio to a temporary WAV file (basic-pitch's
     `predict()` takes a path, not a numpy array — confirmed via prerequisite
-    probe), calls `predict()`, then filters the returned note events by:
+    probe), calls `predict()` with the instrument's frequency bounds (crops
+    the model posteriorgram, suppressing out-of-range hallucinations at the
+    source), then:
 
-      1. InstrumentProfile MIDI range (drop e.g. high-octave hallucinations)
-      2. POLYPHONIC_AMPLITUDE_FLOOR (drop low-confidence detections)
-      3. MIN_NOTE_DURATION_S (drop attack-transient fragments)
+      1. Drops events below POLYPHONIC_PRE_FLOOR (permissive — real chord
+         members register as low as 0.29; strict filtering happens with
+         cluster context in NoteTracker)
+      2. Drops events outside the InstrumentProfile MIDI range
+      3. Absorbs short attack fragments into the adjacent same-pitch event
+      4. Drops remaining events shorter than MIN_NOTE_DURATION_S
 
-    The filtered events are returned as a `PitchResult` with `bp_notes`
-    populated and `frames=[]` (no per-frame data — the model emits assembled
-    notes directly).
-
-    Phase 1 emits singleton events. Phase 2 will add onset clustering for
-    chord detection.
+    The events are returned as a `PitchResult` with `bp_notes` populated and
+    `frames=[]` (no per-frame data — the model emits assembled notes
+    directly).  Amplitude/onset/ring filtering happens in NoteTracker, which
+    has the cluster context these decisions need (see
+    docs/precision_audit_basic_pitch.md).
     """
 
     def estimate(
@@ -330,7 +402,11 @@ class _BasicPitchBackend(_PitchBackend):
             tmp_path = Path(tmp.name)
         try:
             sf.write(tmp_path, audio, sample_rate)
-            _model_out, _midi_data, note_events = predict(str(tmp_path))
+            _model_out, _midi_data, note_events = predict(
+                str(tmp_path),
+                minimum_frequency=profile.freq_min_hz,
+                maximum_frequency=profile.freq_max_hz,
+            )
         finally:
             tmp_path.unlink(missing_ok=True)
 
@@ -341,13 +417,10 @@ class _BasicPitchBackend(_PitchBackend):
             start_s, end_s, midi, amplitude, _pitch_bend = ev
             midi_int = int(midi)
             amp_float = float(amplitude)
-            duration = float(end_s) - float(start_s)
 
-            if amp_float < config.polyphonic_amplitude_floor:
+            if amp_float < config.polyphonic_pre_floor:
                 continue
             if not (profile.midi_min <= midi_int <= profile.midi_max):
-                continue
-            if duration < config.min_note_duration_s:
                 continue
 
             bp_notes.append(BasicPitchNote(
@@ -356,6 +429,15 @@ class _BasicPitchBackend(_PitchBackend):
                 midi=midi_int,
                 amplitude=amp_float,
             ))
+
+        bp_notes = _merge_attack_fragments(
+            bp_notes,
+            max_fragment_s=config.fragment_max_duration_s,
+            max_gap_s=config.fragment_max_gap_s,
+        )
+        bp_notes = [
+            n for n in bp_notes if n.duration_s >= config.min_note_duration_s
+        ]
 
         return PitchResult(
             frames=[],

@@ -29,10 +29,10 @@ SAMPLE_PATH = SAMPLE_ROOT / "bass" / "4_string_bass_line_in.mp3"
 INSTRUMENT = Instrument.BASS
 EXPECTED_DURATION_S = 12.3
 
-# basic-pitch produces 5 raw events: the four open strings plus one sympathetic
-# E1 detection at 6.749s (amp 0.738). In Phase 2, onset clustering groups the
-# G3 onset (6.668s, amp 0.774) with the sympathetic E1 (6.749s, 81ms gap) into
-# one chord event [28, 43], reducing the total event count to 4.
+# basic-pitch detects all four plucks; the bass profile's max_polyphony=1
+# (monophonic MVP scope) keeps only the strongest member per cluster, which
+# removes the sympathetic E1 re-detection at 6.749s that previously joined
+# the G2 pluck as a false chord (see docs/precision_audit_basic_pitch.md).
 NOTE_COUNT_BY_BACKEND: dict[str, int] = {
     "crepe":       4,
     "pyin":        4,
@@ -41,33 +41,27 @@ NOTE_COUNT_BY_BACKEND: dict[str, int] = {
 NOTE_COUNT = NOTE_COUNT_BY_BACKEND[_BACKEND]
 
 # Concert (sounding) MIDI, low string → high string: E1 A1 D2 G2
-# basic-pitch Phase 2: sympathetic E1 (6.749s) clusters with G3 (6.668s) into
-# chord [28, 43]. midi_note returns the lowest pitch (28 = E1).
 EXPECTED_MIDI_BY_BACKEND: dict[str, list[int]] = {
     "crepe":       [28, 33, 38, 43],
     "pyin":        [28, 33, 38, 43],
-    "basic_pitch": [28, 33, 38, 28],   # 4th event is chord [28,43]; midi_note → lowest = 28
+    "basic_pitch": [28, 33, 38, 43],
 }
 EXPECTED_MIDI = EXPECTED_MIDI_BY_BACKEND[_BACKEND]
 
 # Notes are written at concert pitch (bass8vb clef carries the octave offset).
-# basic-pitch Phase 2 (Tasks 5+6): chord [28,43] is serialised as a
-# music21.chord.Chord, so both pitches appear in the score.
 EXPECTED_WRITTEN_MIDI_BY_BACKEND: dict[str, list[int]] = {
     "crepe":       [28, 33, 38, 43],
     "pyin":        [28, 33, 38, 43],
-    "basic_pitch": [28, 28, 33, 38, 43],  # chord [28,43] emits both pitches; 28 appears twice
+    "basic_pitch": [28, 33, 38, 43],
 }
 EXPECTED_WRITTEN_MIDI = EXPECTED_WRITTEN_MIDI_BY_BACKEND[_BACKEND]
 
 # Tab: every open string → ((string_idx, fret=0),), 0-based from lowest string.
 # Phase 2: each assignment is a tuple of (string, fret) pairs; mono → length-1 tuple.
-# basic-pitch Phase 2: last event is chord [28,43]; chord-aware DP assigns E1→string 0
-# and G2→string 3, both open (fret 0).
 EXPECTED_TAB_BY_BACKEND: dict[str, list[tuple[tuple[int, int], ...]]] = {
     "crepe":       [((0, 0),), ((1, 0),), ((2, 0),), ((3, 0),)],
     "pyin":        [((0, 0),), ((1, 0),), ((2, 0),), ((3, 0),)],
-    "basic_pitch": [((0, 0),), ((1, 0),), ((2, 0),), ((0, 0), (3, 0))],  # chord [28,43] → strings 0+3
+    "basic_pitch": [((0, 0),), ((1, 0),), ((2, 0),), ((3, 0),)],
 }
 EXPECTED_TAB = EXPECTED_TAB_BY_BACKEND[_BACKEND]
 

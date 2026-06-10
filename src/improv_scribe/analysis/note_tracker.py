@@ -267,9 +267,10 @@ def _correct_octave_error(
     # correction — e.g. E3 body resonance while E4 is played on a mic'd guitar.
     if audio_window is not None and sample_rate is not None:
         detected_midi, _ = hz_to_midi(median_freq)
-        if detected_midi < profile.midi_min + 24:
-            if _spectral_sub_octave_present(audio_window, median_freq, sample_rate):
-                return sub_hz
+        if detected_midi < profile.midi_min + 24 and _spectral_sub_octave_present(
+            audio_window, median_freq, sample_rate
+        ):
+            return sub_hz
 
     return median_freq
 
@@ -302,7 +303,6 @@ def _avg_tuples(a: tuple[float, ...], b: tuple[float, ...]) -> tuple[float, ...]
 def _cluster_basic_pitch_notes(
     bp_notes: list[BasicPitchNote],
     window_s: float,
-    relative_floor: float,
 ) -> list[list[BasicPitchNote]]:
     """Group basic-pitch events into chord clusters by onset proximity.
 
@@ -313,25 +313,23 @@ def _cluster_basic_pitch_notes(
        window_s. Anchoring on the earliest member (rather than the most
        recent) caps total cluster width.
     3. Within each cluster, deduplicate by MIDI value (keep highest amp).
-    4. Apply relative amplitude floor: drop members whose amplitude is
-       below relative_floor * max(amps in cluster).
-    5. Sort cluster members by MIDI ascending so the resulting tuple is
-       canonical.
+    4. Sort cluster members by MIDI ascending so the result is canonical.
+
+    Amplitude filtering is NOT applied here — it needs cluster context
+    (singleton vs. multi-member floors, ring-over history, onset alignment)
+    and lives in NoteTracker._process_basic_pitch.
 
     Parameters
     ----------
     bp_notes : list[BasicPitchNote]
     window_s : float
-        Cluster window in seconds (typically 0.100).
-    relative_floor : float
-        Drop members below this fraction of the cluster's max amplitude.
+        Cluster window in seconds (typically 0.250).
 
     Returns
     -------
     list[list[BasicPitchNote]]
-        One inner list per cluster, members sorted by MIDI ascending.
-        Clusters appear in onset order. Empty clusters (all members
-        dropped) are omitted.
+        One inner list per cluster, members sorted by MIDI ascending,
+        clusters in onset order.
     """
     if not bp_notes:
         return []
@@ -345,7 +343,7 @@ def _cluster_basic_pitch_notes(
         else:
             raw_clusters[-1].append(note)
 
-    cleaned_clusters: list[list[BasicPitchNote]] = []
+    deduped_clusters: list[list[BasicPitchNote]] = []
     for cluster in raw_clusters:
         # Deduplicate by MIDI value, keeping highest amplitude
         by_midi: dict[int, BasicPitchNote] = {}
@@ -353,20 +351,10 @@ def _cluster_basic_pitch_notes(
             existing = by_midi.get(n.midi)
             if existing is None or n.amplitude > existing.amplitude:
                 by_midi[n.midi] = n
-        deduped = list(by_midi.values())
+        deduped = sorted(by_midi.values(), key=lambda n: n.midi)
+        deduped_clusters.append(deduped)
 
-        # Apply relative amplitude floor within the cluster
-        max_amp = max(n.amplitude for n in deduped)
-        threshold = max_amp * relative_floor
-        survivors = [n for n in deduped if n.amplitude >= threshold]
-
-        if not survivors:
-            continue
-        # Sort by MIDI ascending so tuples are canonical
-        survivors.sort(key=lambda n: n.midi)
-        cleaned_clusters.append(survivors)
-
-    return cleaned_clusters
+    return deduped_clusters
 
 
 def _merge_consecutive_same_pitch(events: list[NoteEvent]) -> list[NoteEvent]:
@@ -460,7 +448,7 @@ class NoteTracker:
             Sorted by onset_s.
         """
         if pitch_result.bp_notes is not None:
-            return self._process_basic_pitch(pitch_result.bp_notes, chunk_offset_s)
+            return self._process_basic_pitch(pitch_result.bp_notes, onsets, chunk_offset_s)
         return self._process_frame_based(pitch_result, onsets, chunk_offset_s, audio)
 
     def _process_frame_based(
@@ -555,26 +543,46 @@ class NoteTracker:
     def _process_basic_pitch(
         self,
         bp_notes: list[BasicPitchNote],
+        onsets: list[Onset],
         chunk_offset_s: float,
     ) -> list[NoteEvent]:
         """Convert basic-pitch's pre-assembled notes into NoteEvents, clustering
         simultaneous detections into chord events.
 
-        Phase 2: clusters of size 1 emit singleton NoteEvents (backward-compatible
-        with Phase 1); clusters of size 2+ emit chord NoteEvents with the full
-        midi_notes tuple sorted ascending.
+        Clusters of size 1 emit singleton NoteEvents; clusters of size 2+ emit
+        chord NoteEvents with the midi_notes tuple sorted ascending.
 
-        Clustering rule (see _cluster_basic_pitch_notes): earliest-anchor + window.
-        Cluster width is capped by ONSET_GROUPING_WINDOW_MS (100 ms default).
-        Members below POLYPHONIC_RELATIVE_FLOOR * max(amps in cluster) are dropped.
+        Filtering applies cluster context (2026-06 precision audit,
+        docs/precision_audit_basic_pitch.md):
 
-        No octave-error correction is applied — basic-pitch already does its own
-        polyphonic spectral analysis (spec §3.2).
+        1. Clustering: earliest-anchor + ONSET_GROUPING_WINDOW_MS window,
+           deduplicated by MIDI (highest amplitude wins).
+        2. Onset gate: a WEAK cluster (max amplitude below
+           POLYPHONIC_AMPLITUDE_FLOOR) must align with a librosa onset —
+           a real strum has an attack, a decay-phase ghost cluster does not.
+           Strong clusters are exempt (librosa misses some genuine strums).
+           Skipped entirely when no onsets are supplied.
+        3. Amplitude floors: singletons need POLYPHONIC_AMPLITUDE_FLOOR;
+           multi-member clusters need max(POLYPHONIC_MULTI_FLOOR,
+           POLYPHONIC_RELATIVE_FLOOR × cluster max) — weak chord members are
+           corroborated by their cluster.
+        4. Ring-over suppression: a non-max member whose pitch chain-links
+           (gaps ≤ RING_CHAIN_GAP_S) to an earlier detection at
+           ≥ amplitude / RING_SUPPRESSION_RATIO is a re-detection of a
+           still-ringing string, not a new note.
+        5. profile.max_polyphony caps members per cluster (bass is
+           monophonic in the MVP scope).
+
+        No octave-error correction is applied — basic-pitch already does its
+        own polyphonic spectral analysis (spec §3.2).
 
         Parameters
         ----------
         bp_notes : list[BasicPitchNote]
             Pre-assembled note events from basic-pitch's predict() output.
+        onsets : list[Onset]
+            librosa-detected onsets for the same audio. Used by the weak-
+            cluster onset gate; pass [] to disable gating.
         chunk_offset_s : float
             Add this to all times so they are session-absolute, not chunk-relative.
 
@@ -586,21 +594,81 @@ class NoteTracker:
         if not bp_notes:
             return []
 
-        window_s = self._config.onset_grouping_window_ms / 1000.0
-        clusters = _cluster_basic_pitch_notes(
-            bp_notes,
-            window_s=window_s,
-            relative_floor=self._config.polyphonic_relative_floor,
-        )
+        cfg = self._config
+        window_s = cfg.onset_grouping_window_ms / 1000.0
+        clusters = _cluster_basic_pitch_notes(bp_notes, window_s=window_s)
+        onset_times = [o.time_s for o in onsets]
+
+        # Ring-over chain state: midi → (chain_end_s, chain_max_amplitude).
+        # Updated from every deduped cluster member (even gated/dropped ones —
+        # the acoustic energy was real and extends the ring).
+        chain: dict[int, tuple[float, float]] = {}
 
         events: list[NoteEvent] = []
         for cluster in clusters:
-            onset = min(n.start_s for n in cluster) + chunk_offset_s
-            offset = max(n.end_s for n in cluster) + chunk_offset_s
-            midi_notes = tuple(n.midi for n in cluster)
-            frequencies = tuple(440.0 * 2.0 ** ((n.midi - 69) / 12.0) for n in cluster)
-            confidences = tuple(n.amplitude for n in cluster)
-            cents = tuple(0.0 for _ in cluster)
+            anchor = min(n.start_s for n in cluster)
+            max_amp = max(n.amplitude for n in cluster)
+
+            gated = False
+            if onset_times and max_amp < cfg.polyphonic_amplitude_floor:
+                gated = not any(
+                    -cfg.onset_gate_tol_before_s
+                    <= anchor - t
+                    <= cfg.onset_gate_tol_after_s
+                    for t in onset_times
+                )
+
+            if len(cluster) == 1:
+                survivors = [
+                    n for n in cluster
+                    if n.amplitude >= cfg.polyphonic_amplitude_floor
+                ]
+            else:
+                member_floor = max(
+                    cfg.polyphonic_multi_floor,
+                    cfg.polyphonic_relative_floor * max_amp,
+                )
+                survivors = [n for n in cluster if n.amplitude >= member_floor]
+
+            if len(survivors) > 1:
+                kept: list[BasicPitchNote] = []
+                for n in survivors:
+                    if n.amplitude < max_amp:
+                        prior = chain.get(n.midi)
+                        if (
+                            prior is not None
+                            and n.start_s - prior[0] <= cfg.ring_chain_gap_s
+                            and n.amplitude < cfg.ring_suppression_ratio * prior[1]
+                        ):
+                            continue
+                    kept.append(n)
+                survivors = kept
+
+            for n in cluster:
+                prior = chain.get(n.midi)
+                if prior is not None and n.start_s - prior[0] <= cfg.ring_chain_gap_s:
+                    chain[n.midi] = (max(n.end_s, prior[0]), max(n.amplitude, prior[1]))
+                else:
+                    chain[n.midi] = (n.end_s, n.amplitude)
+
+            if gated or not survivors:
+                continue
+
+            if len(survivors) > self._profile.max_polyphony:
+                survivors = sorted(survivors, key=lambda n: -n.amplitude)
+                survivors = sorted(
+                    survivors[: self._profile.max_polyphony],
+                    key=lambda n: n.midi,
+                )
+
+            onset = min(n.start_s for n in survivors) + chunk_offset_s
+            offset = max(n.end_s for n in survivors) + chunk_offset_s
+            midi_notes = tuple(n.midi for n in survivors)
+            frequencies = tuple(
+                440.0 * 2.0 ** ((n.midi - 69) / 12.0) for n in survivors
+            )
+            confidences = tuple(n.amplitude for n in survivors)
+            cents = tuple(0.0 for _ in survivors)
             events.append(NoteEvent(
                 onset_s=onset,
                 offset_s=offset,
@@ -610,5 +678,12 @@ class NoteTracker:
                 cents_deviations=cents,
             ))
 
-        sorted_events = sorted(events, key=lambda e: e.onset_s)
-        return _merge_consecutive_same_pitch(sorted_events)
+        # No _merge_consecutive_same_pitch here: on the basic-pitch path each
+        # cluster corresponds to a model-detected (re-)articulation, and the
+        # phantom re-onsets that merge was built for are already removed by
+        # the singleton floor / onset gate / ring suppression above. Sustained
+        # strums ring into the next attack, so identical consecutive chords
+        # routinely have offset-to-onset gaps below the merge threshold —
+        # merging would fuse genuine re-strums (measured: open-C collapsed
+        # from five strums to one event).
+        return sorted(events, key=lambda e: e.onset_s)

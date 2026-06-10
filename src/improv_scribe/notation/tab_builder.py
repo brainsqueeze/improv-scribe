@@ -28,6 +28,12 @@ BASS_TUNING:   list[int] = [28, 33, 38, 43]           # E1 A1 D2 G2
 
 MAX_FRET: int = 22
 
+# Low-position preference added to each shape's cost (× max fret in shape).
+# Small enough that one fret of genuine hand movement (cost 1.0) always
+# outweighs it; large enough to break free-transition ties (transitions
+# involving all-open shapes cost 0) toward the nut.
+_POSITION_EPS: float = 0.01
+
 _TUNINGS: dict[Instrument, list[int]] = {
     Instrument.GUITAR: GUITAR_TUNING,
     Instrument.BASS:   BASS_TUNING,
@@ -118,14 +124,21 @@ def assign_frets(
     Cost model
     ----------
     Within-shape cost: hand stretch = max(fret) - min(fret) over fretted
-                       members; open strings (fret 0) excluded; 0 for
-                       all-open shapes.
+                       members, plus a small low-position preference
+                       (_POSITION_EPS × max fret). Open strings (fret 0)
+                       are excluded from the stretch; all-open shapes
+                       cost 0.
     Transition cost:   |centroid_curr - centroid_prev| where centroid is
-                       the mean fret of fretted members in the shape;
-                       defaults to 0 if all open.
+                       the mean fret of fretted members in the shape.
+                       Zero when either shape is all-open: open strings
+                       need no hand position, so moving to or from an
+                       all-open shape is free (treating all-open as
+                       position 0 would wrongly penalise open strings
+                       after a high-position shape). The _POSITION_EPS
+                       term resolves the resulting free-transition ties
+                       toward the nut.
     Tie-break:         lex (cumulative_cost, max_fret_in_shape,
-                       min_fret_in_shape). On singletons this reduces
-                       bit-equivalently to the Phase 0 single-note DP.
+                       min_fret_in_shape).
 
     Rests receive None.
 
@@ -167,9 +180,10 @@ def assign_frets(
     if not non_rest_indices:
         return result
 
-    def _centroid(shape: tuple[tuple[int, int], ...]) -> float:
+    def _centroid(shape: tuple[tuple[int, int], ...]) -> float | None:
+        """Mean fret of fretted members; None for all-open shapes."""
         fretted = [f for _s, f in shape if f > 0]
-        return sum(fretted) / len(fretted) if fretted else 0.0
+        return sum(fretted) / len(fretted) if fretted else None
 
     def _stretch(shape: tuple[tuple[int, int], ...]) -> int:
         fretted = [f for _s, f in shape if f > 0]
@@ -188,7 +202,8 @@ def assign_frets(
     # Initialise first position: no transition cost; tie-break by (max_fret, min_fret)
     for k, shape in enumerate(shape_lists[0]):
         all_frets = [f for _s, f in shape]
-        dp[0][k] = (0.0, max(all_frets), min(all_frets))
+        cost0 = _stretch(shape) + _POSITION_EPS * max(all_frets)
+        dp[0][k] = (cost0, max(all_frets), min(all_frets))
 
     for j in range(1, n_pos):
         for k, shape in enumerate(shape_lists[j]):
@@ -200,8 +215,17 @@ def assign_frets(
             for p, prev_shape in enumerate(shape_lists[j - 1]):
                 if dp[j - 1][p][0] == INF:
                     continue
-                trans = abs(curr_cent - _centroid(prev_shape))
-                cumulative = dp[j - 1][p][0] + stretch + trans
+                prev_cent = _centroid(prev_shape)
+                trans = (
+                    0.0 if curr_cent is None or prev_cent is None
+                    else abs(curr_cent - prev_cent)
+                )
+                cumulative = (
+                    dp[j - 1][p][0]
+                    + stretch
+                    + trans
+                    + _POSITION_EPS * max(all_frets)
+                )
                 cand = (cumulative, max(all_frets), min(all_frets))
                 if cand < best:
                     best = cand
