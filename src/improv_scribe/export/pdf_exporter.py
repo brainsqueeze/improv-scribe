@@ -83,42 +83,102 @@ class PDFExporter:
         output_path = Path(output_path).with_suffix(".pdf")
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        debug_mxl = Path(tempfile.gettempdir()) / "ats_last_export.musicxml"
-
         with tempfile.TemporaryDirectory() as tmpdir:
-            mxl_path = Path(tmpdir) / "score.musicxml"
-            self._write_musicxml(score, mxl_path)
-
-            if (
-                tab_notes is not None
-                and tab_assignments is not None
-                and tab_profile is not None
-            ):
-                from improv_scribe.export.tab_xml import inject_tab_part
-
-                inject_tab_part(mxl_path, tab_notes, tab_assignments, tab_profile)
-
-            # Keep a copy of the MusicXML for post-mortem inspection.
-            shutil.copy2(mxl_path, debug_mxl)
-
+            mxl_path, debug_mxl = self._prepare_musicxml(
+                score, Path(tmpdir), tab_notes, tab_assignments, tab_profile
+            )
             self._run_musescore(mxl_path, output_path, debug_mxl)
 
         return output_path
+
+    def export_svg_pages(
+        self,
+        score: music21.stream.Score,
+        output_dir: Path,
+        tab_notes: list[QuantizedNote] | None = None,
+        tab_assignments: list[tuple[int, int] | None] | None = None,
+        tab_profile: InstrumentProfile | None = None,
+    ) -> list[Path]:
+        """
+        Render *score* to one SVG file per page for in-app preview.
+
+        Uses the same MusicXML (including the injected TAB staff) as
+        :meth:`export`, so the preview matches the exported PDF.
+
+        Parameters
+        ----------
+        score : music21.stream.Score
+        output_dir : Path
+            Directory that receives ``score-<n>.svg`` files; created if needed.
+        tab_notes, tab_assignments, tab_profile
+            See :meth:`export`.
+
+        Returns
+        -------
+        list[Path]
+            SVG page paths in page order.
+        """
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mxl_path, debug_mxl = self._prepare_musicxml(
+                score, Path(tmpdir), tab_notes, tab_assignments, tab_profile
+            )
+            self._run_musescore(mxl_path, output_dir / "score.svg", debug_mxl)
+
+        pages = sorted(
+            output_dir.glob("score-*.svg"),
+            key=lambda p: int(p.stem.rsplit("-", 1)[1]),
+        )
+        if not pages:
+            # MuseScore omits the page suffix for single-page scores.
+            single = output_dir / "score.svg"
+            pages = [single] if single.exists() else []
+        if not pages:
+            raise RuntimeError("MuseScore produced no SVG pages.")
+        return pages
 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 
+    def _prepare_musicxml(
+        self,
+        score: music21.stream.Score,
+        tmpdir: Path,
+        tab_notes: list[QuantizedNote] | None,
+        tab_assignments: list[tuple[int, int] | None] | None,
+        tab_profile: InstrumentProfile | None,
+    ) -> tuple[Path, Path]:
+        """Write MusicXML (with optional TAB staff) into *tmpdir*."""
+        debug_mxl = Path(tempfile.gettempdir()) / "ats_last_export.musicxml"
+        mxl_path = tmpdir / "score.musicxml"
+        self._write_musicxml(score, mxl_path)
+
+        if (
+            tab_notes is not None
+            and tab_assignments is not None
+            and tab_profile is not None
+        ):
+            from improv_scribe.export.tab_xml import inject_tab_part
+
+            inject_tab_part(mxl_path, tab_notes, tab_assignments, tab_profile)
+
+        # Keep a copy of the MusicXML for post-mortem inspection.
+        shutil.copy2(mxl_path, debug_mxl)
+        return mxl_path, debug_mxl
+
     def _write_musicxml(self, score: music21.stream.Score, path: Path) -> None:
         """Serialize score to MusicXML."""
         score.write("musicxml", fp=str(path))
 
-    def _run_musescore(self, input_mxl: Path, output_pdf: Path, debug_mxl: Path | None = None) -> None:
-        """Invoke MuseScore CLI to convert MusicXML → PDF."""
+    def _run_musescore(self, input_mxl: Path, output_path: Path, debug_mxl: Path | None = None) -> None:
+        """Invoke MuseScore CLI to convert MusicXML → PDF/SVG (by output suffix)."""
         cmd = [
             self._mscore_path,
             "--force",
-            "--export-to", str(output_pdf),
+            "--export-to", str(output_path),
             str(input_mxl),
         ]
         try:

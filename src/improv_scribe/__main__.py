@@ -13,12 +13,14 @@ from PyQt6.QtWidgets import QApplication
 
 from improv_scribe.config import AppConfig
 from improv_scribe.gui.main_window import MainWindow
+from improv_scribe.gui.theme import apply_theme
 
 
 def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("Audio to Sheet Music")
     app.setOrganizationName("AudioToSheet")
+    apply_theme(app)
 
     config = AppConfig()
     window = MainWindow(config)

@@ -13,6 +13,8 @@ import pyqtgraph as pg
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
+from improv_scribe.gui.theme import CYAN, PLOT_BG, style_plot
+
 
 class _Signaller(QObject):
     """Thin QObject to bridge the audio callback thread → Qt main thread."""
@@ -48,16 +50,19 @@ class WaveformWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         pg.setConfigOptions(antialias=True)
-        self._plot_widget = pg.PlotWidget(background="#1a1a2e")
+        self._plot_widget = pg.PlotWidget(background=PLOT_BG)
         self._plot_widget.setLabel("left", "Amplitude")
         self._plot_widget.setLabel("bottom", "Time (s)")
+        style_plot(self._plot_widget)
         self._plot_widget.setYRange(-1.0, 1.0)
-        self._plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        self._plot_widget.showGrid(x=True, y=True, alpha=0.12)
         self._plot_widget.setMouseEnabled(x=False, y=False)
 
         x_axis = np.linspace(-self._window_samples / self._sample_rate, 0, self._window_samples)
-        pen = pg.mkPen(color="#00d4ff", width=1)
-        self._curve = self._plot_widget.plot(x_axis, self._buffer, pen=pen)
+        pen = pg.mkPen(color=CYAN, width=1.4)
+        self._curve = self._plot_widget.plot(
+            x_axis, self._buffer, pen=pen, fillLevel=0, brush=(47, 212, 255, 40)
+        )
 
         layout.addWidget(self._plot_widget)
 
