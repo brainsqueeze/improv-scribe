@@ -7,16 +7,20 @@ the audio pipeline and export pipeline.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QVBoxLayout,
     QWidget,
 )
 
 from improv_scribe.capture.audio_input import DeviceInfo
+from improv_scribe.gui.flow_layout import FlowLayout
+from improv_scribe.gui.theme import ACCENT_LIGHT, TEXT, make_icon, make_pixmap
 
 
 class TransportBar(QWidget):
@@ -47,80 +51,116 @@ class TransportBar(QWidget):
         super().__init__(parent)
         self._setup_ui()
 
+    def _make_field(
+        self, label: str, icon_name: str, combo: QComboBox, min_width: int
+    ) -> QFrame:
+        """Wrap *combo* in a labelled card with a leading icon."""
+        field = QFrame()
+        field.setObjectName("Field")
+        field.setMinimumWidth(min_width)
+        row = QHBoxLayout(field)
+        row.setContentsMargins(12, 6, 10, 6)
+        row.setSpacing(10)
+
+        icon_label = QLabel()
+        icon_label.setPixmap(make_pixmap(icon_name, ACCENT_LIGHT, 18))
+        icon_label.setFixedWidth(20)
+        row.addWidget(icon_label)
+
+        col = QVBoxLayout()
+        col.setSpacing(0)
+        caption = QLabel(label.upper())
+        caption.setObjectName("FieldLabel")
+        col.addWidget(caption)
+        combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        combo.setMinimumContentsLength(6)
+        col.addWidget(combo)
+        row.addLayout(col, 1)
+        return field
+
+    @staticmethod
+    def _set_field_enabled(field: QFrame, enabled: bool) -> None:
+        field.setProperty("disabledField", not enabled)
+        field.style().unpolish(field)
+        field.style().polish(field)
+
     def _setup_ui(self) -> None:
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
+        # Wrapping layout: controls reflow onto extra rows on narrow windows.
+        layout = FlowLayout(self, margin=20, h_spacing=10, v_spacing=10)
 
         # -- Device selector --
-        layout.addWidget(QLabel("Input:"))
         self._device_combo = QComboBox()
-        self._device_combo.setMinimumWidth(200)
         self._device_combo.currentIndexChanged.connect(self._on_device_changed)
-        layout.addWidget(self._device_combo)
-
-        layout.addSpacing(12)
+        self._device_field = self._make_field("Input", "mic", self._device_combo, 220)
+        self._device_combo.setMinimumContentsLength(22)  # device names run long
+        layout.addWidget(self._device_field)
 
         # -- Instrument --
-        layout.addWidget(QLabel("Instrument:"))
         self._instrument_combo = QComboBox()
         self._instrument_combo.addItems(["Guitar", "Bass"])
         self._instrument_combo.currentTextChanged.connect(
             lambda t: self.instrument_changed.emit(t.lower())
         )
-        layout.addWidget(self._instrument_combo)
-
-        layout.addSpacing(12)
+        self._instrument_field = self._make_field(
+            "Instrument", "guitar", self._instrument_combo, 130
+        )
+        layout.addWidget(self._instrument_field)
 
         # -- Backend --
-        layout.addWidget(QLabel("Pitch:"))
         self._backend_combo = QComboBox()
         self._backend_combo.addItems(["CREPE", "Basic-pitch", "pYIN"])
         self._backend_combo.currentTextChanged.connect(
             lambda t: self.backend_changed.emit(t.lower())
         )
-        layout.addWidget(self._backend_combo)
-
-        layout.addSpacing(12)
+        layout.addWidget(self._make_field("Pitch", "wave", self._backend_combo, 140))
 
         # -- Rhythm mode --
-        layout.addWidget(QLabel("Rhythm:"))
         self._rhythm_combo = QComboBox()
         self._rhythm_combo.addItems(["Auto-tempo", "Raw"])
         self._rhythm_combo.currentTextChanged.connect(
             lambda t: self.rhythm_mode_changed.emit("auto" if "auto" in t.lower() else "raw")
         )
-        layout.addWidget(self._rhythm_combo)
+        layout.addWidget(self._make_field("Rhythm", "clock", self._rhythm_combo, 140))
 
-        layout.addStretch()
+        # -- Transport buttons (kept together so they wrap as a group) --
+        actions = QWidget()
+        actions_row = QHBoxLayout(actions)
+        actions_row.setContentsMargins(0, 0, 0, 0)
+        actions_row.setSpacing(10)
 
-        # -- Transport buttons --
-        self._record_btn = QPushButton("⏺  Record")
-        self._record_btn.setStyleSheet("QPushButton { color: #ff4444; font-weight: bold; }")
+        self._record_btn = QPushButton("Record")
+        self._record_btn.setObjectName("Record")
+        self._record_btn.setIcon(make_icon("record", "#ffffff", 14))
         self._record_btn.clicked.connect(self.record_requested)
-        layout.addWidget(self._record_btn)
+        actions_row.addWidget(self._record_btn)
 
-        self._stop_btn = QPushButton("⏹  Stop")
+        self._stop_btn = QPushButton("Stop")
+        self._stop_btn.setIcon(make_icon("stop", TEXT, 16))
         self._stop_btn.setEnabled(False)
         self._stop_btn.clicked.connect(self.stop_requested)
-        layout.addWidget(self._stop_btn)
+        actions_row.addWidget(self._stop_btn)
 
-        layout.addSpacing(8)
-
-        self._pdf_btn = QPushButton("📄 Export PDF")
+        self._pdf_btn = QPushButton("Export PDF")
+        self._pdf_btn.setObjectName("Export")
+        self._pdf_btn.setIcon(make_icon("pdf", TEXT, 18))
         self._pdf_btn.setEnabled(False)
         self._pdf_btn.clicked.connect(self.export_pdf_requested)
-        layout.addWidget(self._pdf_btn)
+        actions_row.addWidget(self._pdf_btn)
 
-        self._midi_btn = QPushButton("🎵 Export MIDI")
+        self._midi_btn = QPushButton("Export MIDI")
+        self._midi_btn.setObjectName("Export")
+        self._midi_btn.setIcon(make_icon("midi", TEXT, 18))
         self._midi_btn.setEnabled(False)
         self._midi_btn.clicked.connect(self.export_midi_requested)
-        layout.addWidget(self._midi_btn)
+        actions_row.addWidget(self._midi_btn)
+        layout.addWidget(actions)
 
-        layout.addSpacing(8)
-
+        # Retained for API compatibility; MainWindow reports status in the
+        # status bar, so this label is not shown.
         self._status_label = QLabel("Ready")
-        self._status_label.setMinimumWidth(180)
-        layout.addWidget(self._status_label)
+        self._status_label.hide()
 
     # ------------------------------------------------------------------
     # Device list management
@@ -133,11 +173,15 @@ class TransportBar(QWidget):
         self._devices = devices
         for d in devices:
             self._device_combo.addItem(f"[{d.index}] {d.name}", userData=d.index)
+            self._device_combo.setItemData(
+                self._device_combo.count() - 1, d.name, Qt.ItemDataRole.ToolTipRole
+            )
         self._device_combo.blockSignals(False)
         if devices:
             self.device_changed.emit(devices[0].index)
 
     def _on_device_changed(self, combo_idx: int) -> None:
+        self._device_combo.setToolTip(self._device_combo.itemText(combo_idx))
         if combo_idx >= 0 and combo_idx < self._device_combo.count():
             dev_index = self._device_combo.itemData(combo_idx)
             if dev_index is not None:
@@ -152,6 +196,8 @@ class TransportBar(QWidget):
         self._stop_btn.setEnabled(is_recording)
         self._device_combo.setEnabled(not is_recording)
         self._instrument_combo.setEnabled(not is_recording)
+        self._set_field_enabled(self._device_field, not is_recording)
+        self._set_field_enabled(self._instrument_field, not is_recording)
 
     def set_has_result(self, has_result: bool) -> None:
         self._pdf_btn.setEnabled(has_result)

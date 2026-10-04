@@ -21,6 +21,8 @@ import pyqtgraph as pg
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
+from improv_scribe.gui.theme import PLOT_BG, style_plot
+
 # CQT parameters
 N_BINS = 84          # 7 octaves * 12 bins/octave
 BINS_PER_OCTAVE = 12
@@ -69,17 +71,28 @@ class SpectrogramWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self._plot_widget = pg.PlotWidget(background="#1a1a2e")
+        self._plot_widget = pg.PlotWidget(background=PLOT_BG)
         self._plot_widget.setLabel("left", "Pitch (MIDI-approx)")
         self._plot_widget.setLabel("bottom", "Time →")
+        style_plot(self._plot_widget)
         self._plot_widget.setMouseEnabled(x=False, y=False)
 
         self._img = pg.ImageItem()
         self._plot_widget.addItem(self._img)
+        self._plot_widget.setRange(xRange=(0, DISPLAY_COLS), yRange=(0, N_BINS), padding=0)
 
-        # Colormap: dark blue → cyan → yellow
-        colormap = pg.colormap.get("CET-L9")
-        self._img.setColorMap(colormap) # type: ignore
+        # Colormap: deep navy → violet → orange → yellow
+        colormap = pg.ColorMap(
+            [0.0, 0.35, 0.65, 0.85, 1.0],
+            [
+                (11, 13, 28),
+                (60, 45, 140),
+                (193, 92, 255),
+                (255, 138, 92),
+                (255, 212, 121),
+            ],
+        )
+        self._img.setColorMap(colormap)  # type: ignore
 
         layout.addWidget(self._plot_widget)
 

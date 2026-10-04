@@ -34,16 +34,24 @@ IDLE → RECORDING → PROCESSING → DONE → IDLE
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 import threading
 from pathlib import Path
 
 import numpy as np
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QSplitter,
+    QStackedWidget,
     QStatusBar,
     QVBoxLayout,
     QWidget,
@@ -58,6 +66,7 @@ from improv_scribe.capture.noise_gate import NoiseGate
 from improv_scribe.config import AppConfig
 from improv_scribe.export.midi_exporter import MIDIExporter
 from improv_scribe.export.pdf_exporter import PDFExporter
+from improv_scribe.gui.score_widget import ScorePanel
 from improv_scribe.gui.spectrogram_widget import SpectrogramWidget
 from improv_scribe.gui.transport import TransportBar
 from improv_scribe.gui.waveform_widget import WaveformWidget
@@ -70,6 +79,8 @@ class _PipelineSignaller(QObject):
     """Signals emitted by the background processing thread → main thread."""
     processing_done = pyqtSignal(object, object)   # (score, events)
     processing_failed = pyqtSignal(str)
+    render_done = pyqtSignal(int, object)          # (render token, list[Path])
+    render_failed = pyqtSignal(int, str)           # (render token, message)
 
 
 class MainWindow(QMainWindow):
@@ -96,10 +107,16 @@ class MainWindow(QMainWindow):
         self._current_device_index: int | None = None
         self._current_instrument = Instrument.GUITAR
         self._rhythm_mode = "auto"
+        self._badges: list[QLabel] = []
+        self._info_label = QLabel()
 
         self._signaller = _PipelineSignaller()
         self._signaller.processing_done.connect(self._on_processing_done)
         self._signaller.processing_failed.connect(self._on_processing_failed)
+        self._signaller.render_done.connect(self._on_render_done)
+        self._signaller.render_failed.connect(self._on_render_failed)
+        self._render_token = 0
+        self._render_dir: Path | None = None
 
         self._setup_ui()
         self._populate_devices()
@@ -114,6 +131,7 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
 
         central = QWidget()
+        central.setObjectName("Root")
         self.setCentralWidget(central)
         root_layout = QVBoxLayout(central)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -132,22 +150,123 @@ class MainWindow(QMainWindow):
         self._transport.set_backend(self._config.pitch_backend)
         root_layout.addWidget(self._transport)
 
-        # Waveform + spectrogram in a vertical splitter
+        # View switch (Live | Score)
+        root_layout.addWidget(self._build_view_strip())
+
+        # Live view: waveform + spectrogram cards in a vertical splitter
         splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setContentsMargins(20, 0, 20, 0)
+        splitter.setChildrenCollapsible(False)
 
         self._waveform = WaveformWidget(sample_rate=self._config.sample_rate)
-        splitter.addWidget(self._waveform)
+        splitter.addWidget(
+            self._make_card("Waveform", "last 2.0 s", self._waveform, badge=True)
+        )
 
         self._spectrogram = SpectrogramWidget(sample_rate=self._config.sample_rate)
-        splitter.addWidget(self._spectrogram)
-
+        splitter.addWidget(
+            self._make_card("Spectrogram", "CQT · E1 – E7", self._spectrogram, badge=True)
+        )
         splitter.setSizes([250, 350])
-        root_layout.addWidget(splitter)
+
+        # Score view: rendered notation + TAB
+        self._score_panel = ScorePanel()
+        score_host = QWidget()
+        score_layout = QVBoxLayout(score_host)
+        score_layout.setContentsMargins(20, 0, 20, 0)
+        score_layout.addWidget(self._score_panel)
+
+        self._views = QStackedWidget()
+        self._views.addWidget(splitter)      # 0 = live
+        self._views.addWidget(score_host)    # 1 = score
+        root_layout.addWidget(self._views, 1)
 
         # Status bar
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
+        self._status_bar.setSizeGripEnabled(False)
+        self._status_bar.addPermanentWidget(self._info_label)
+        self._refresh_info_label()
         self._status_bar.showMessage("Ready — select a device and press Record.")
+
+    def _build_view_strip(self) -> QWidget:
+        """Live | Score segmented switch plus a one-line hint."""
+        strip = QWidget()
+        row = QHBoxLayout(strip)
+        row.setContentsMargins(20, 0, 20, 14)
+        row.setSpacing(16)
+
+        bar = QFrame()
+        bar.setObjectName("SegBar")
+        bar_row = QHBoxLayout(bar)
+        bar_row.setContentsMargins(4, 4, 4, 4)
+        bar_row.setSpacing(4)
+        self._live_btn = QPushButton("Live")
+        self._score_btn = QPushButton("Score")
+        group = QButtonGroup(self)
+        group.setExclusive(True)
+        for idx, btn in enumerate((self._live_btn, self._score_btn)):
+            btn.setObjectName("Seg")
+            btn.setCheckable(True)
+            group.addButton(btn, idx)
+            bar_row.addWidget(btn)
+        self._live_btn.setChecked(True)
+        self._score_btn.setEnabled(False)
+        group.idClicked.connect(self._views_set_index)
+        row.addWidget(bar)
+
+        self._view_hint = QLabel("Score renders after you press Stop.")
+        self._view_hint.setObjectName("Hint")
+        row.addWidget(self._view_hint, 1)
+        return strip
+
+    def _views_set_index(self, index: int) -> None:
+        self._views.setCurrentIndex(index)
+
+    def _show_view(self, index: int) -> None:
+        (self._live_btn, self._score_btn)[index].setChecked(True)
+        self._views.setCurrentIndex(index)
+
+    def _make_card(
+        self, title: str, subtitle: str, body: QWidget, badge: bool = False
+    ) -> QFrame:
+        """Wrap *body* in a titled card; optionally add a LIVE/IDLE badge."""
+        card = QFrame()
+        card.setObjectName("Card")
+        col = QVBoxLayout(card)
+        col.setContentsMargins(18, 14, 18, 14)
+        col.setSpacing(8)
+        head = QHBoxLayout()
+        t = QLabel(title)
+        t.setObjectName("CardTitle")
+        s = QLabel(subtitle)
+        s.setObjectName("CardSub")
+        head.addWidget(t)
+        head.addWidget(s)
+        head.addStretch()
+        if badge:
+            b = QLabel("IDLE")
+            b.setObjectName("Badge")
+            b.setProperty("kind", "idle")
+            self._badges.append(b)
+            head.addWidget(b)
+        col.addLayout(head)
+        col.addWidget(body, 1)
+        return card
+
+    def _set_live_badges(self, live: bool) -> None:
+        for b in self._badges:
+            b.setText("LIVE" if live else "IDLE")
+            b.setProperty("kind", "live" if live else "idle")
+            b.style().unpolish(b)
+            b.style().polish(b)
+
+    def _refresh_info_label(self) -> None:
+        backend = self._config.pitch_backend.replace("_", "-").title()
+        self._info_label.setText(
+            f"{self._config.sample_rate / 1000:g} kHz · {backend} · "
+            f"{self._current_instrument.value.title()}"
+        )
 
     # ------------------------------------------------------------------
     # Device setup
@@ -162,6 +281,7 @@ class MainWindow(QMainWindow):
 
     def _on_instrument_changed(self, instrument_str: str) -> None:
         self._current_instrument = Instrument(instrument_str)
+        self._refresh_info_label()
         profile = get_profile(self._current_instrument)
         # Update noise gate threshold if instrument provides an override
         if profile.noise_gate_rms_override is not None:
@@ -179,6 +299,7 @@ class MainWindow(QMainWindow):
                 .replace("crepe", "crepe")
                 .replace("basic-pitch", "basic_pitch")
         )
+        self._refresh_info_label()
 
     def _on_rhythm_mode_changed(self, mode: str) -> None:
         self._rhythm_mode = mode
@@ -200,6 +321,12 @@ class MainWindow(QMainWindow):
         self._is_recording = True
         self._transport.set_recording(True)
         self._transport.set_has_result(False)
+        self._set_live_badges(True)
+        self._invalidate_render()
+        self._score_panel.show_message("Record and press Stop to render the score.")
+        self._score_btn.setEnabled(False)
+        self._show_view(0)
+        self._view_hint.setText("Score renders after you press Stop.")
         self._status_bar.showMessage("● Recording…")
 
     def _on_stop(self) -> None:
@@ -209,7 +336,12 @@ class MainWindow(QMainWindow):
 
         self._is_recording = False
         self._transport.set_recording(False)
+        self._set_live_badges(False)
         self._status_bar.showMessage("Processing…")
+        self._score_btn.setEnabled(True)
+        self._score_panel.show_rendering()
+        self._show_view(1)
+        self._view_hint.setText("Analysing your recording, then rendering the score.")
 
         # Run analysis pipeline in background thread
         blocks_copy = list(self._recorded_blocks)
@@ -338,13 +470,102 @@ class MainWindow(QMainWindow):
         self._transport.set_has_result(True)
         n = len(events) if events else 0
         mode_str = "auto-tempo" if has_score else "raw timing"
-        self._status_bar.showMessage(
-            f"Done — {n} notes detected ({mode_str}). Ready to export."
-        )
+        if has_score:
+            self._status_bar.showMessage(
+                f"Done — {n} notes detected ({mode_str}). Rendering score…"
+            )
+            self._view_hint.setText("MuseScore is rendering your score.")
+            self._start_render(score)
+        else:
+            self._status_bar.showMessage(
+                f"Done — {n} notes detected ({mode_str}). Ready to export."
+            )
+            self._score_panel.show_message(
+                "Score preview needs Auto-tempo rhythm mode. "
+                "Raw timing exports to MIDI only."
+            )
+            self._view_hint.setText("No score in Raw rhythm mode.")
 
     def _on_processing_failed(self, message: str) -> None:
         self._status_bar.showMessage(f"Error: {message}")
+        self._score_panel.show_message("No score — processing failed.")
+        self._view_hint.setText("Processing failed.")
         QMessageBox.warning(self, "Processing Failed", message)
+
+    # ------------------------------------------------------------------
+    # In-app score rendering (runs after Stop, in a background thread)
+    # ------------------------------------------------------------------
+
+    def _invalidate_render(self) -> None:
+        """Discard any in-flight render and delete its temp pages."""
+        self._render_token += 1
+        self._cleanup_render_dir()
+
+    def _cleanup_render_dir(self) -> None:
+        if self._render_dir is not None:
+            shutil.rmtree(self._render_dir, ignore_errors=True)
+            self._render_dir = None
+
+    def _start_render(self, score: object) -> None:
+        self._invalidate_render()
+        token = self._render_token
+        out_dir = Path(tempfile.mkdtemp(prefix="ats_score_"))
+        self._render_dir = out_dir
+        self._score_panel.show_rendering()
+        threading.Thread(
+            target=self._run_render,
+            args=(
+                token,
+                score,
+                out_dir,
+                self._last_quantized_notes,
+                self._last_tab_assignments,
+                self._last_profile,
+            ),
+            daemon=True,
+        ).start()
+
+    def _run_render(
+        self,
+        token: int,
+        score: object,
+        out_dir: Path,
+        tab_notes: object,
+        tab_assignments: object,
+        tab_profile: object,
+    ) -> None:
+        """Background thread: MusicXML → MuseScore → SVG pages."""
+        try:
+            pages = PDFExporter(self._config).export_svg_pages(
+                score,  # type: ignore[arg-type]
+                out_dir,
+                tab_notes=tab_notes,  # type: ignore[arg-type]
+                tab_assignments=tab_assignments,  # type: ignore[arg-type]
+                tab_profile=tab_profile,  # type: ignore[arg-type]
+            )
+            self._signaller.render_done.emit(token, pages)
+        except Exception as exc:  # noqa: BLE001
+            self._signaller.render_failed.emit(token, str(exc))
+
+    def _on_render_done(self, token: int, pages: object) -> None:
+        if token != self._render_token:
+            return  # stale: a new recording started
+        self._score_panel.show_pages(list(pages))  # type: ignore[call-overload]
+        self._view_hint.setText(
+            "Rendered from this recording. Export PDF saves the same pages."
+        )
+        self._status_bar.showMessage("Score ready. Ready to export.")
+
+    def _on_render_failed(self, token: int, message: str) -> None:
+        if token != self._render_token:
+            return
+        first_line = message.strip().splitlines()[0] if message.strip() else "unknown error"
+        self._score_panel.show_message(
+            f"Couldn't render the score preview.\n{first_line}\n"
+            "MIDI export is still available."
+        )
+        self._view_hint.setText("Score preview unavailable.")
+        self._status_bar.showMessage("Score preview failed — exports still available.")
 
     # ------------------------------------------------------------------
     # Export
@@ -411,4 +632,5 @@ class MainWindow(QMainWindow):
         """Ensure stream is stopped on window close."""
         if self._stream:
             self._stream.stop()
+        self._cleanup_render_dir()
         super().closeEvent(event)  # type: ignore[arg-type]
